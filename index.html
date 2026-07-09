@@ -156,6 +156,9 @@
   <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
 </div>
 <audio id="bgm" src="bgm.m4a" loop preload="none"></audio>
+<audio id="amb-day" src="amb-day.m4a" loop preload="none"></audio>
+<audio id="amb-rain" src="amb-rain.m4a" loop preload="none"></audio>
+<audio id="amb-night" src="amb-night.m4a" loop preload="none"></audio>
 
 <script>
 'use strict';
@@ -541,6 +544,7 @@ function update(dt) {
   updateBouquets(dt);
   updateChorus(dt);
   updateNotes(dt);
+  updateAmbience(dt);
   updateBees(dt);
   updateBirds(dt);
 
@@ -935,6 +939,33 @@ function handleKey(k) {
   else if (k === 'b') { spawnBirdFlock(); setMsg('새들이 정원 위를 지나갑니다', '#9db4c9'); }
   else if (k === 'f') { spawnFly(); spawnFly(); setMsg('나비가 날아듭니다', '#e8a0c8'); }
   else if (k === 'm') toggleBgm(true);
+}
+
+// ── ambient sound: bees by day, rain in rain, crickets at night ─
+// kept quiet so it sits under the music instead of competing with it
+const AMB_VOL = { day: 0.16, rain: 0.2, night: 0.15 };
+let ambCurrent = null;
+
+function updateAmbience(dt) {
+  if (!started) return;
+  const want = weather === 'rain' ? 'rain' : night ? 'night' : 'day';
+  if (want !== ambCurrent) {
+    ambCurrent = want;
+    for (const k of ['day', 'rain', 'night']) {
+      const el = document.getElementById('amb-' + k);
+      if (k === want) {
+        el.volume = 0; // fades in below
+        el.play().catch(() => {});
+      } else if (!el.paused) {
+        el.pause();
+      }
+    }
+  }
+  // gentle fade-in toward the target volume
+  const el = document.getElementById('amb-' + ambCurrent);
+  if (!el.paused && el.volume < AMB_VOL[ambCurrent]) {
+    el.volume = Math.min(AMB_VOL[ambCurrent], el.volume + 0.12 * dt);
+  }
 }
 
 // ── background music (bgm.m4a alongside this file; optional) ─
