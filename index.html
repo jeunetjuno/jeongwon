@@ -157,7 +157,8 @@
   </div>
   <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m / 0 · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
 </div>
-<audio id="bgm" src="bgm.m4a" loop preload="none"></audio>
+<audio id="bgm-day" src="bgm-day.m4a" loop preload="none"></audio>
+<audio id="bgm-night" src="bgm-night.m4a" loop preload="none"></audio>
 <audio id="amb-day" src="amb-day.m4a" loop preload="none"></audio>
 <audio id="amb-rain" src="amb-rain.m4a" loop preload="none"></audio>
 <audio id="amb-night" src="amb-night.m4a" loop preload="none"></audio>
@@ -547,6 +548,7 @@ function update(dt) {
   updateChorus(dt);
   updateNotes(dt);
   updateAmbience(dt);
+  updateBgm();
   updateBees(dt);
   updateBirds(dt);
 
@@ -983,22 +985,42 @@ function updateAmbience(dt) {
   }
 }
 
-// ── background music (bgm.m4a alongside this file; optional) ─
+// ── background music: Zelda's Lullaby by day, Mirror of Twilight at night ─
+const BGM_VOL = 0.45;
 let bgmOn = false;
+let bgmCurrent = null;
+
+function bgmEl(k) { return document.getElementById('bgm-' + k); }
+
+function updateBgm() {
+  if (!started || !bgmOn) return;
+  const want = night ? 'night' : 'day';
+  if (want === bgmCurrent) return;
+  bgmCurrent = want;
+  bgmEl(want === 'day' ? 'night' : 'day').pause();
+  const el = bgmEl(want);
+  el.volume = BGM_VOL;
+  el.play().catch(() => {});
+}
+
 function toggleBgm(verbose) {
-  const a = document.getElementById('bgm');
   if (bgmOn) {
-    a.pause();
+    bgmEl('day').pause();
+    bgmEl('night').pause();
     bgmOn = false;
+    bgmCurrent = null;
     if (verbose) setMsg('배경음악을 껐습니다', '#75996f');
     return;
   }
-  a.volume = 0.45;
-  a.play().then(() => {
+  const want = night ? 'night' : 'day';
+  const el = bgmEl(want);
+  el.volume = BGM_VOL;
+  el.play().then(() => {
     bgmOn = true;
+    bgmCurrent = want;
     if (verbose) setMsg('배경음악이 흐릅니다', '#8fbf7f');
   }).catch(() => {
-    if (verbose) setMsg('음악 파일(bgm.m4a)이 없는 곳이에요', '#b08d5a');
+    if (verbose) setMsg('음악 파일이 없는 곳이에요', '#b08d5a');
   });
 }
 
