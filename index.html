@@ -86,7 +86,12 @@
     margin: 0; font-size: 15px; color: var(--ink);
     font-family: var(--mono);
   }
-  #intro .lines p + p { color: var(--dim); font-size: 13.5px; }
+  #intro .lines p + p { color: var(--scream); font-size: 13.5px; }
+  #intro h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; letter-spacing: 0.3em; text-indent: 0.3em; color: var(--dim); }
+  #tutorial { display: grid; grid-template-columns: auto 1fr; gap: 9px 20px; text-align: left; font-family: var(--mono); font-size: 13.5px; max-width: 580px; }
+  #tutorial .k { color: var(--fence); white-space: nowrap; }
+  #tutorial .d { color: var(--ink); }
+  #tutorial .warn { color: var(--scream); grid-column: 1 / -1; margin-top: 8px; }
   #enterhint {
     font-size: 13px; color: var(--fence);
     letter-spacing: 0.2em;
@@ -109,9 +114,26 @@
 </style>
 
 <div id="intro">
-  <div class="lines">
-    <p>이곳은 당신의 정원입니다. 여유로운 시간을 즐기세요</p>
-    <p>꽃을 뽑을 땐 주의하세요. 비명을 지를 수도 있습니다.</p>
+  <div id="intro-page1">
+    <div class="lines">
+      <p>이곳은 당신의 정원입니다. 여유로운 시간을 즐기세요</p>
+      <p>꽃을 뽑을 땐 주의하세요. 비명을 지를 수도 있습니다.</p>
+    </div>
+  </div>
+  <div id="intro-page2" hidden>
+    <h2>정원에서 할 수 있는 일</h2>
+    <div id="tutorial">
+      <span class="k">빈 땅 터치 · S</span><span class="d">씨앗 심기 — 씨앗 봉투가 씨를 뿌립니다</span>
+      <span class="k">W</span><span class="d">물뿌리개로 물주기 — 마르면 꽃이 빨리 시들어요</span>
+      <span class="k">X</span><span class="d">꽃 뽑기 — 봉오리는 작은 꽃다발, 활짝 핀 꽃은 큰 꽃다발</span>
+      <span class="k">핀 꽃 터치</span><span class="d">꽃이 춤을 춥니다</span>
+      <span class="k">1 · 2</span><span class="d">맑음 / 비 — 비가 대신 물을 줍니다</span>
+      <span class="k">N</span><span class="d">밤 / 낮 — 6분마다 저절로 바뀝니다</span>
+      <span class="k">B · F</span><span class="d">새 부르기 / 나비 부르기</span>
+      <span class="k">M</span><span class="d">배경음악 켜기 / 끄기</span>
+      <span class="k">큰 꽃다발 10개</span><span class="d">...모아 보면 알게 됩니다</span>
+      <span class="warn">그리고 — 아주 가끔, 뽑힌 꽃 밑에서 무언가 비명을 지릅니다.</span>
+    </div>
   </div>
   <div id="enterhint">[ ENTER ]</div>
 </div>
@@ -127,9 +149,13 @@
     <button data-k="1"><b>1</b> 맑음</button>
     <button data-k="2"><b>2</b> 비</button>
     <button data-k="n"><b>N</b> 밤/낮</button>
+    <button data-k="b"><b>B</b> 새</button>
+    <button data-k="f"><b>F</b> 나비</button>
+    <button data-k="m"><b>M</b> 음악</button>
   </div>
-  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
+  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
 </div>
+<audio id="bgm" src="bgm.m4a" loop preload="none"></audio>
 
 <script>
 'use strict';
@@ -177,7 +203,9 @@ const HEADS = [['{', '@', '}'], ['(', '*', ')'], ['<', '%', '>'], ['{', '&', '}'
 
 const DT = 1 / 30;
 const FREEZE_MS = 5000;
-const MANDRAKE_CHANCE = 0.003;
+const MANDRAKE_CHANCE = 1 / 16; // one in ~16 pulled flowers
+const MANDRAKE_PITY = 32;       // guaranteed if it hasn't happened in 32 pulls
+const DAY_NIGHT_PERIOD = 360;   // auto day/night flip every 6 minutes
 
 let t = 0;
 let weather = 'sun';
@@ -185,7 +213,10 @@ let night = false;
 let plants = [], drops = [], splashes = [], flies = [], holes = [];
 let bees = [], birds = [], bugs = [];
 let packets = [], seeds = []; // seed-packet animation
-let bouquets = [], bouquetCount = 0;
+let bouquets = [], bouquetCount = 0, bigBouquetCount = 0;
+let pullsSinceMandrake = 0;
+let dayNightT = 0;
+let chorusUntil = 0, chorusNotes = [];
 let lastThirst = 0;
 let can = null;
 let mandrake = null;
@@ -204,7 +235,7 @@ function setMsg(text, color, secs) {
 }
 
 // ── plants ───────────────────────────────────────────────────
-const STAGE_DUR = [4, 7, 9];
+const STAGE_DUR = [10, 15, 15]; // seed→sprout 10s, sprout→bud 15s, bud→bloom 15s
 const BLOOM_LIFE = 240; // a well-watered bloom lasts 4 minutes
 
 function makePlant(x) {
@@ -290,20 +321,68 @@ function pullFlower() {
   plants.splice(plants.indexOf(p), 1);
   if (p.stage === 0) { setMsg('씨앗만 도로 파냈네요...', '#b08d5a'); return; }
   holes.push({ x: p.x, until: Date.now() + 40000 });
-  if (p.stage >= 2 && Math.random() < MANDRAKE_CHANCE) {
-    triggerMandrake(p);
-    return;
+  if (p.stage >= 2) {
+    pullsSinceMandrake++;
+    if (Math.random() < MANDRAKE_CHANCE || pullsSinceMandrake >= MANDRAKE_PITY) {
+      pullsSinceMandrake = 0;
+      triggerMandrake(p);
+      return;
+    }
   }
-  if (p.stage <= 2) { // pulled before full bloom → a little bouquet
+  if (p.stage === 1) { setMsg('아직 새싹이라... 꽃다발이 되지 못했어요', '#8fbf7f'); return; }
+  if (p.stage === 2) { // bud → small bouquet
     bouquetCount++;
     bouquets.push({
-      x: clamp(p.x, 3, W - 4), y: baseRow() - 3, ttl: 2.5,
+      x: clamp(p.x, 3, W - 4), y: baseRow() - 3, ttl: 2.5, big: false,
       c1: pick(PETAL_COLS), c2: pick(PETAL_COLS), c3: pick(PETAL_COLS),
     });
     setMsg(`작은 꽃다발을 만들었습니다 — 지금까지 ${bouquetCount}개`, '#d98fb5');
     return;
   }
-  setMsg(p.stage === 4 ? '시든 꽃을 뽑았습니다' : '꽃을 뽑았습니다', '#8fbf7f');
+  if (p.stage === 3) { // full bloom → big bouquet
+    bigBouquetCount++;
+    bouquets.push({
+      x: clamp(p.x, 4, W - 5), y: baseRow() - 4, ttl: 3, big: true,
+      c1: pick(PETAL_COLS), c2: pick(PETAL_COLS), c3: pick(PETAL_COLS),
+    });
+    setMsg(`큰 꽃다발을 만들었습니다 — 지금까지 ${bigBouquetCount}개`, '#e87ba8');
+    if (bigBouquetCount > 0 && bigBouquetCount % 10 === 0) startChorus();
+    return;
+  }
+  setMsg('시든 꽃을 뽑았습니다', '#8fbf7f');
+}
+
+// ── flower chorus: every 10 big bouquets ───────────────────
+function startChorus() {
+  chorusUntil = t + 9;
+  setMsg('큰 꽃다발 10개! 꽃들이 다같이 춤추며 노래합니다', '#ffd166', 9);
+  chorusSong();
+}
+
+function updateChorus(dt) {
+  if (t >= chorusUntil) return;
+  for (const p of plants) {
+    if (p.stage === 3) {
+      p.danceUntil = t + 0.5; // keep everyone dancing
+      if (Math.random() < 0.04) {
+        chorusNotes.push({
+          x: p.x + rnd(-1, 1), y: baseRow() - 4, ttl: rnd(2, 3.2),
+          vy: rnd(1.2, 2.4), phase: rnd(0, 6.28),
+          ch: pick(['#', 'b']), col: pick(PETAL_COLS), // sharps & flats as notes
+        });
+      }
+    }
+  }
+}
+
+function updateNotes(dt) {
+  for (let i = chorusNotes.length - 1; i >= 0; i--) {
+    const n = chorusNotes[i];
+    n.ttl -= dt;
+    n.y -= n.vy * dt;
+    n.x += Math.sin(t * 2 + n.phase) * 1.6 * dt;
+    if (n.ttl <= 0 || n.y < 2) chorusNotes.splice(i, 1);
+  }
 }
 
 function updateBouquets(dt) {
@@ -355,10 +434,14 @@ function updateBees(dt) {
   }
 }
 
+function spawnBirdFlock() {
+  const dir = pick([-1, 1]);
+  birds.push({ x: dir > 0 ? -10 : W + 10, y: ri(2, 6), vx: dir * rnd(5, 9), n: ri(1, 3) });
+}
+
 function updateBirds(dt) {
   if (weather === 'sun' && !night && birds.length < 2 && Math.random() < 0.006) {
-    const dir = pick([-1, 1]);
-    birds.push({ x: dir > 0 ? -10 : W + 10, y: ri(2, 6), vx: dir * rnd(5, 9), n: ri(1, 3) });
+    spawnBirdFlock();
   }
   for (let i = birds.length - 1; i >= 0; i--) {
     const g = birds[i];
@@ -383,7 +466,7 @@ function update(dt) {
     if (weather === 'rain') p.moisture = clamp(p.moisture + 0.08 * dt, 0, 1);
     else p.moisture = clamp(p.moisture - 0.003 * dt, 0, 1); // one watering lasts ~4-5 minutes
     if (p.stage < 3) {
-      p.prog += (0.35 + 0.95 * p.moisture) * dt;
+      p.prog += dt; // fixed clock so stage times match STAGE_DUR exactly
       if (p.prog >= STAGE_DUR[p.stage]) { p.stage++; p.prog = 0; }
     } else if (p.stage === 3) {
       p.prog += (1 + 1.5 * (1 - p.moisture)) * dt;
@@ -420,10 +503,18 @@ function update(dt) {
     if (splashes[i].ttl <= 0) splashes.splice(i, 1);
   }
 
+  // auto day/night cycle
+  dayNightT += dt;
+  if (dayNightT >= DAY_NIGHT_PERIOD) {
+    dayNightT = 0;
+    night = !night;
+    setMsg(night ? '해가 저물고 밤이 찾아옵니다...' : '아침이 밝아옵니다', night ? '#9a8fd0' : '#e8c95a', 5);
+  }
+
   if (weather === 'sun' && !night) {
     if (flies.length < 2 && Math.random() < 0.01) spawnFly();
-  } else {
-    flies.length = 0;
+  } else if (flies.length && Math.random() < 0.02) {
+    flies.pop(); // butterflies drift off in rain or at night
   }
   for (const f of flies) {
     f.x += f.vx * dt;
@@ -448,6 +539,8 @@ function update(dt) {
   updateCan(dt);
   updatePackets(dt);
   updateBouquets(dt);
+  updateChorus(dt);
+  updateNotes(dt);
   updateBees(dt);
   updateBirds(dt);
 
@@ -625,12 +718,29 @@ function drawBouquets() {
   for (const q of bouquets) {
     const y = Math.round(q.y);
     const dim = q.ttl < 0.6; // fades before vanishing
-    bset(q.x - 1, y - 1, '@', dim ? 101 : q.c1);
-    bset(q.x, y - 1, '%', dim ? 101 : B + q.c2);
-    bset(q.x + 1, y - 1, '@', dim ? 101 : q.c3);
-    btext(q.x - 1, y, '\\|/', dim ? 58 : 70);
-    bset(q.x, y + 1, 'Y', dim ? 95 : 179);
+    if (q.big) {
+      bset(q.x - 1, y - 2, '@', dim ? 101 : q.c2);
+      bset(q.x, y - 2, '%', dim ? 101 : B + q.c3);
+      bset(q.x + 1, y - 2, '@', dim ? 101 : q.c1);
+      bset(q.x - 2, y - 1, '@', dim ? 101 : q.c1);
+      bset(q.x - 1, y - 1, '%', dim ? 101 : q.c3);
+      bset(q.x, y - 1, '@', dim ? 101 : B + q.c2);
+      bset(q.x + 1, y - 1, '%', dim ? 101 : q.c1);
+      bset(q.x + 2, y - 1, '@', dim ? 101 : q.c3);
+      btext(q.x - 2, y, '\\\\|//', dim ? 58 : 70);
+      bset(q.x, y + 1, 'Y', dim ? 95 : 179);
+    } else {
+      bset(q.x - 1, y - 1, '@', dim ? 101 : q.c1);
+      bset(q.x, y - 1, '%', dim ? 101 : B + q.c2);
+      bset(q.x + 1, y - 1, '@', dim ? 101 : q.c3);
+      btext(q.x - 1, y, '\\|/', dim ? 58 : 70);
+      bset(q.x, y + 1, 'Y', dim ? 95 : 179);
+    }
   }
+}
+
+function drawNotes() {
+  for (const n of chorusNotes) bset(n.x, n.y, n.ch, B + n.col);
 }
 
 function drawMandrake() {
@@ -677,6 +787,7 @@ function render() {
   drawCan();
   drawPackets();
   drawBouquets();
+  drawNotes();
 
   drawMandrake();
   drawFence();
@@ -687,7 +798,7 @@ function render() {
   document.getElementById('statusbar').innerHTML =
     `<b>${night ? '밤' : '낮'}</b> · ${weather === 'sun' ? '맑음' : '비'} · ` +
     `식물 <b>${plants.length}</b> · 개화 <b>${blooms}</b> · 시듦 <b>${wilts}</b>` +
-    ` · 꽃다발 <b>${bouquetCount}</b>`;
+    ` · 꽃다발 <b>${bouquetCount}</b> · 큰 꽃다발 <b>${bigBouquetCount}</b>`;
 }
 
 const escCh = (ch) => (ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch);
@@ -784,6 +895,30 @@ function scream() {
   } catch (e) { /* no audio, no problem */ }
 }
 
+// gentle pentatonic tune for the flower chorus
+function chorusSong() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    const melody = [523, 587, 659, 784, 880, 784, 659, 587, 523, 659, 784, 1046, 880, 784, 659, 523];
+    const step = 0.28;
+    const t0 = actx.currentTime + 0.05;
+    melody.forEach((f, i) => {
+      for (const rep of [0, melody.length]) {
+        const at = t0 + (i + rep) * step;
+        const o = actx.createOscillator();
+        const g = actx.createGain();
+        o.type = 'triangle';
+        o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(0.09, at + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + step * 0.95);
+        o.connect(g); g.connect(actx.destination);
+        o.start(at); o.stop(at + step);
+      }
+    });
+  } catch (e) { /* no audio, no problem */ }
+}
+
 // ── input & loop ─────────────────────────────────────────────
 function handleKey(k) {
   if (freezeUntil > Date.now()) return; // frozen by the scream
@@ -794,8 +929,31 @@ function handleKey(k) {
   else if (k === '2') { weather = 'rain'; setMsg('비가 내리기 시작합니다...', '#6fb7d9'); }
   else if (k === 'n') {
     night = !night;
+    dayNightT = 0; // manual flip restarts the 6-minute cycle
     setMsg(night ? '달이 떠오릅니다... 반딧불이가 나와요' : '새로운 아침이 밝았습니다', night ? '#9a8fd0' : '#e8c95a');
   }
+  else if (k === 'b') { spawnBirdFlock(); setMsg('새들이 정원 위를 지나갑니다', '#9db4c9'); }
+  else if (k === 'f') { spawnFly(); spawnFly(); setMsg('나비가 날아듭니다', '#e8a0c8'); }
+  else if (k === 'm') toggleBgm(true);
+}
+
+// ── background music (bgm.m4a alongside this file; optional) ─
+let bgmOn = false;
+function toggleBgm(verbose) {
+  const a = document.getElementById('bgm');
+  if (bgmOn) {
+    a.pause();
+    bgmOn = false;
+    if (verbose) setMsg('배경음악을 껐습니다', '#75996f');
+    return;
+  }
+  a.volume = 0.45;
+  a.play().then(() => {
+    bgmOn = true;
+    if (verbose) setMsg('배경음악이 흐릅니다', '#8fbf7f');
+  }).catch(() => {
+    if (verbose) setMsg('음악 파일(bgm.m4a)이 없는 곳이에요', '#b08d5a');
+  });
 }
 
 let started = false;
@@ -806,6 +964,7 @@ function start() {
   document.getElementById('app').hidden = false;
   try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
   resize();
+  toggleBgm(false); // start the music quietly if bgm.m4a exists here
   setMsg('S 를 눌러 첫 씨앗을 심어보세요', '#8fbf7f', 10);
   let last = Date.now();
   setInterval(() => {
@@ -819,14 +978,31 @@ function start() {
   }, 1000 / 30);
 }
 
+// intro flow: page 1 (welcome) → page 2 (tutorial) → garden
+let introStage = 0;
+function advanceIntro() {
+  if (started) return;
+  if (introStage === 0) {
+    introStage = 1;
+    document.getElementById('intro-page1').hidden = true;
+    document.getElementById('intro-page2').hidden = false;
+  } else {
+    start();
+  }
+}
+
 document.addEventListener('keydown', (e) => {
   if (!started) {
-    if (e.key === 'Enter') start();
+    if (e.key === 'Enter' || e.code === 'Enter') advanceIntro();
     return;
   }
-  handleKey(e.key.toLowerCase());
+  // use the physical key (e.code) so keys work with the Korean IME active (s → ㄴ 등)
+  let k = e.key.toLowerCase();
+  if (e.code && e.code.startsWith('Key')) k = e.code.slice(3).toLowerCase();
+  else if (e.code && e.code.startsWith('Digit')) k = e.code.slice(5);
+  handleKey(k);
 });
-document.getElementById('intro').addEventListener('click', start);
+document.getElementById('intro').addEventListener('click', advanceIntro);
 document.querySelectorAll('#controls button').forEach((btn) => {
   btn.addEventListener('click', () => handleKey(btn.dataset.k));
 });
@@ -846,6 +1022,8 @@ document.getElementById('screen').addEventListener('click', (e) => {
   if (cy >= 1 && cy <= H - 1) sowSeed(clamp(cx, 5, W - 6));
 });
 window.addEventListener('resize', () => { if (started && freezeUntil < Date.now()) { resize(); render(); } });
+// tiny debug handle (console only)
+window.__jw = { plants, startChorus, makePlant, pullFlower, stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT }) };
 // re-measure once the embedded font finishes loading — its metrics differ from the fallback
 if (document.fonts && document.fonts.ready) {
   document.fonts.ready.then(() => { if (started && freezeUntil < Date.now()) { resize(); render(); } });
