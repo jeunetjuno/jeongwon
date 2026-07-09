@@ -131,6 +131,7 @@
       <span class="k">N</span><span class="d">밤 / 낮 — 6분마다 저절로 바뀝니다</span>
       <span class="k">B · F</span><span class="d">새 부르기 / 나비 부르기</span>
       <span class="k">M</span><span class="d">배경음악 켜기 / 끄기</span>
+      <span class="k">0</span><span class="d">전체 무음 (음악·환경음·효과음 모두)</span>
       <span class="k">큰 꽃다발 10개</span><span class="d">...모아 보면 알게 됩니다</span>
       <span class="warn">그리고 — 아주 가끔, 뽑힌 꽃 밑에서 무언가 비명을 지릅니다.</span>
     </div>
@@ -152,8 +153,9 @@
     <button data-k="b"><b>B</b> 새</button>
     <button data-k="f"><b>F</b> 나비</button>
     <button data-k="m"><b>M</b> 음악</button>
+    <button data-k="0" id="mutebtn"><b>0</b> 무음</button>
   </div>
-  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
+  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m / 0 · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
 </div>
 <audio id="bgm" src="bgm.m4a" loop preload="none"></audio>
 <audio id="amb-day" src="amb-day.m4a" loop preload="none"></audio>
@@ -873,6 +875,7 @@ function resize() {
 // ── scream audio ─────────────────────────────────────────────
 let actx = null;
 function scream() {
+  if (muted) return;
   try {
     if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
     const now = actx.currentTime;
@@ -901,6 +904,7 @@ function scream() {
 
 // gentle pentatonic tune for the flower chorus
 function chorusSong() {
+  if (muted) return;
   try {
     if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
     const melody = [523, 587, 659, 784, 880, 784, 659, 587, 523, 659, 784, 1046, 880, 784, 659, 523];
@@ -939,6 +943,17 @@ function handleKey(k) {
   else if (k === 'b') { spawnBirdFlock(); setMsg('새들이 정원 위를 지나갑니다', '#9db4c9'); }
   else if (k === 'f') { spawnFly(); spawnFly(); setMsg('나비가 날아듭니다', '#e8a0c8'); }
   else if (k === 'm') toggleBgm(true);
+  else if (k === '0') toggleMute();
+}
+
+// ── global mute: music, ambience, and effect sounds ─────────
+let muted = false;
+function toggleMute() {
+  muted = !muted;
+  document.querySelectorAll('audio').forEach((a) => { a.muted = muted; });
+  const btn = document.getElementById('mutebtn');
+  if (btn) btn.innerHTML = muted ? '<b>0</b> 소리 켜기' : '<b>0</b> 무음';
+  setMsg(muted ? '모든 소리를 껐습니다' : '소리가 다시 납니다', muted ? '#75996f' : '#8fbf7f');
 }
 
 // ── ambient sound: bees by day, rain in rain, crickets at night ─
