@@ -368,12 +368,15 @@ function startChorus() {
   // spirit flowers rise from the empty ground to join the song —
   // the fewer living blooms, the more spirits come out
   const blooms = plants.filter((p) => p.stage === 3).length;
-  const want = clamp(Math.floor(W / 12) - blooms, 2, 8);
+  const want = clamp(Math.floor(W / 14) - blooms, 2, 6);
   for (let tries = 0; tries < 60 && spirits.length < want; tries++) {
-    const x = ri(5, W - 6);
-    if (plants.every((p) => Math.abs(p.x - x) >= 5) &&
-        spirits.every((s) => Math.abs(s.x - x) >= 5)) {
-      spirits.push({ x, born: t, phase: rnd(0, 6.28), col: pick(SPIRIT_COLS), head: pick(HEADS) });
+    const x = ri(5, W - 11);
+    if (plants.every((p) => Math.abs(p.x - x) >= 6) &&
+        spirits.every((s) => Math.abs(s.x - x) >= 9)) {
+      spirits.push({
+        x, born: t, phase: rnd(0, 6.28), col: pick(SPIRIT_COLS),
+        kind: pick(['trumpet', 'violin', 'harp']),
+      });
     }
   }
   chorusSong();
@@ -396,7 +399,9 @@ function updateChorus(dt) {
     }
   }
   for (const s of spirits) {
-    if (t - s.born > 0.5 && Math.random() < 0.04) spawnNote(s.x);
+    if (t - s.born > 0.5 && Math.random() < 0.05) {
+      spawnNote(s.x + (s.kind === 'trumpet' ? 7 : 4)); // notes leave the instrument
+    }
   }
 }
 
@@ -787,20 +792,29 @@ function drawSpirits() {
   const b = baseRow();
   for (const s of spirits) {
     const grow = t - s.born;
-    if (grow < 0.5) { // rising from the soil
-      bset(s.x - 1, b, '\\', 65); bset(s.x, b, '|', 65); bset(s.x + 1, b, '/', 65);
-      continue;
-    }
     const fading = t > chorusUntil - 1;
     const pc = fading ? 240 : s.col;
-    const dx = clamp(Math.round(Math.sin(t * 10 + s.phase) * 1.2), -1, 1);
-    const hy = Math.floor(t * 6 + s.phase) % 2 === 0 ? b - 3 : b - 2;
-    bset(s.x - 1, b, '\\', 65); bset(s.x, b, '|', 65); bset(s.x + 1, b, '/', 65);
-    bset(s.x, b - 1, '|', 65);
-    if (hy === b - 3) bset(s.x, b - 2, '|', 65);
-    bset(s.x - 1 + dx, hy, s.head[0], pc);
-    bset(s.x + dx, hy, s.head[1], fading ? 240 : B + pc);
-    bset(s.x + 1 + dx, hy, s.head[2], pc);
+    if (grow < 0.5) { // a wisp curls out of the soil
+      bset(s.x, b, '~', 240);
+      bset(s.x, b - 1, '.', pc);
+      continue;
+    }
+    const y = b - 1 - (Math.sin(t * 2 + s.phase) > 0 ? 1 : 0); // gentle hover
+    // ghost musician
+    bset(s.x - 1, y - 1, '(', pc); bset(s.x, y - 1, 'o', B + pc); bset(s.x + 1, y - 1, ')', pc);
+    bset(s.x - 1, y, '/', pc); bset(s.x, y, '|', pc); bset(s.x + 1, y, '\\', pc);
+    bset(s.x, y + 1, Math.floor(t * 4 + s.phase) % 2 ? '~' : '-', 240); // wavering tail
+    const brass = fading ? 240 : 178;
+    if (s.kind === 'trumpet') {
+      btext(s.x + 2, y, '==={>', brass);
+    } else if (s.kind === 'violin') {
+      btext(s.x + 2, y, ',==,', fading ? 240 : 137);
+      bset(s.x + 4, y - 1, Math.floor(t * 5 + s.phase) % 2 ? '\\' : '/', pc); // bow strokes
+    } else { // harp
+      btext(s.x + 3, y - 1, ',7', brass);
+      btext(s.x + 3, y, '||', fading ? 240 : Math.floor(t * 6 + s.phase) % 2 ? 229 : 187); // shimmering strings
+      btext(s.x + 3, y + 1, '`|', brass);
+    }
   }
 }
 
