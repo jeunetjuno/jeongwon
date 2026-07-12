@@ -244,6 +244,7 @@ const DAY_NIGHT_PERIOD = 360;   // auto day/night flip every 6 minutes
 
 let t = 0;
 let weather = 'sun';
+let autoRainUntil = 0; // >0 while an auto-triggered shower is running
 let night = false;
 let plants = [], drops = [], splashes = [], flies = [], holes = [];
 let bees = [], birds = [], bugs = [];
@@ -653,6 +654,25 @@ function setNight(v) {
   }
 }
 
+// weather drifts on its own: showers roll in now and then, day or night,
+// and clear after a while (leaving a rainbow if it's daytime)
+function updateWeather(dt) {
+  if (autoRainUntil > 0) { // an auto shower is running
+    if (t >= autoRainUntil) {
+      autoRainUntil = 0;
+      weather = 'sun';
+      if (!night) { rainbowUntil = t + 12; setMsg('비가 그치고 무지개가 떠올랐습니다', '#e8a0c8', 6); }
+      else setMsg('비구름이 물러갑니다', '#9db4c9', 5);
+    }
+    return;
+  }
+  if (weather === 'sun' && Math.random() < 0.004 * dt) { // ~once every several minutes
+    weather = 'rain';
+    autoRainUntil = t + rnd(30, 75);
+    setMsg('구름이 몰려오고 비가 내리기 시작합니다...', '#6fb7d9', 5);
+  }
+}
+
 function updateRaven(dt) {
   if (raven) {
     if (raven.fleeing) {
@@ -816,6 +836,7 @@ function update(dt) {
     if (!bloodMoon) setMsg(night ? '해가 저물고 밤이 찾아옵니다...' : '아침이 밝아옵니다', night ? '#9a8fd0' : '#e8c95a', 5);
   }
 
+  updateWeather(dt);
   updateRaven(dt);
   updateReaper(dt);
   updateWorms(dt);
@@ -1430,6 +1451,7 @@ function handleKey(k) {
   else if (k === '1') {
     const wasRain = weather === 'rain';
     weather = 'sun';
+    autoRainUntil = 0; // manual control overrides any auto shower
     if (wasRain && !night) {
       rainbowUntil = t + 12;
       setMsg('비가 그치자 무지개가 떠올랐습니다', '#e8a0c8', 6);
@@ -1437,7 +1459,7 @@ function handleKey(k) {
       setMsg(night ? '구름이 걷히고... 별빛' : '해가 나왔습니다', '#e8c95a');
     }
   }
-  else if (k === '2') { weather = 'rain'; setMsg('비가 내리기 시작합니다...', '#6fb7d9'); }
+  else if (k === '2') { weather = 'rain'; autoRainUntil = 0; setMsg('비가 내리기 시작합니다...', '#6fb7d9'); }
   else if (k === 'n') {
     setNight(!night); // also rolls the blood-moon omen
     if (!bloodMoon) setMsg(night ? '달이 떠오릅니다... 반딧불이가 나와요' : '새로운 아침이 밝았습니다', night ? '#9a8fd0' : '#e8c95a');
@@ -1646,7 +1668,8 @@ document.getElementById('screen').addEventListener('click', (e) => {
   // catch a falling star to make a wish
   const si = stars.findIndex((s) => Math.abs(s.x - cx) <= 3 && Math.abs(s.y - cy) <= 2);
   if (si >= 0) { grantWish(si); return; }
-  if (gnome && gnome.state !== 'flee' && Math.abs(gnome.x - cx) <= 3 && cy >= soilTop() - 4) {
+  // generous hit box: the whole tugged column, flower head down to the ground
+  if (gnome && gnome.state !== 'flee' && Math.abs(gnome.x - cx) <= 4 && cy >= baseRow() - 5) {
     scareGnome();
     return;
   }
