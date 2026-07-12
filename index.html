@@ -132,7 +132,9 @@
       <span class="k">B · F</span><span class="d">새 부르기 / 나비 부르기</span>
       <span class="k">M</span><span class="d">배경음악 켜기 / 끄기</span>
       <span class="k">0</span><span class="d">전체 무음 (음악·환경음·효과음 모두)</span>
+      <span class="k">C</span><span class="d">희귀꽃 도감 — 반짝이는 씨앗을 끝까지 키워 뽑으면 기록됩니다</span>
       <span class="k">큰 꽃다발 10개</span><span class="d">...모아 보면 알게 됩니다</span>
+      <span class="warn">땅속의 무언가가 꽃을 노립니다 — 잡아당기면 클릭해서 쫓아내세요.</span>
       <span class="warn">그리고 — 아주 가끔, 뽑힌 꽃 밑에서 무언가 비명을 지릅니다.</span>
     </div>
   </div>
@@ -155,7 +157,7 @@
     <button data-k="m"><b>M</b> 음악</button>
     <button data-k="0" id="mutebtn"><b>0</b> 무음</button>
   </div>
-  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m / 0 · 터치: 빈 땅 = 씨앗 심기, 활짝 핀 꽃 = 춤</div>
+  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m / c / 0 · 터치: 빈 땅 = 씨앗, 핀 꽃 = 춤, 침입자 = 격퇴</div>
 </div>
 <audio id="bgm-day" src="bgm-day.m4a" loop preload="none"></audio>
 <audio id="bgm-night" src="bgm-night.m4a" loop preload="none"></audio>
@@ -225,12 +227,28 @@ let dayNightT = 0;
 let chorusUntil = 0, chorusNotes = [], spirits = [];
 let raven = null, reaper = null, tombstones = [], bloodMoon = false;
 const TOMB_AFTER = 120; // wilted flowers left this long turn to stone
+
+// ── underground & rare flowers ──────────────────────────────
+let worms = [], gnome = null;
+let collection = {}; // rare type → count, persisted in localStorage
+try { collection = JSON.parse(localStorage.getItem('jw-collection')) || {}; } catch (e) {}
+const RARE_TYPES = {
+  golden:    { name: '금빛 꽃',   petal: 178, center: 220, head: ['{', '$', '}'] },
+  moonlight: { name: '달맞이 꽃', petal: 189, center: 231, head: ['{', 'o', '}'] },
+  crystal:   { name: '수정 꽃',   petal: 51,  center: 123, head: ['<', '#', '>'] },
+  rainbow:   { name: '무지개 꽃', petal: 205, center: 220, head: ['{', '@', '}'] },
+  blood:     { name: '핏빛 꽃',   petal: 124, center: 196, head: ['{', '*', '}'] },
+};
+function saveCollection() {
+  try { localStorage.setItem('jw-collection', JSON.stringify(collection)); } catch (e) {}
+}
 let lastThirst = 0;
 let can = null;
 let mandrake = null;
 let freezeUntil = 0;
 
-const soilTop = () => H - 4;
+const soilDepth = () => clamp(Math.floor(H * 0.2), 3, 6); // deeper soil on taller screens
+const soilTop = () => H - 1 - soilDepth();
 const baseRow = () => soilTop() - 1;
 
 const msgEl = () => document.getElementById('msgline');
@@ -246,15 +264,23 @@ function setMsg(text, color, secs) {
 const STAGE_DUR = [10, 15, 15]; // seed→sprout 10s, sprout→bud 15s, bud→bloom 15s
 const BLOOM_LIFE = 240; // a well-watered bloom lasts 4 minutes
 
-function makePlant(x) {
+function makePlant(x, rare) {
+  const r = rare ? RARE_TYPES[rare] : null;
   return {
     x, stage: 0, prog: 0, moisture: 0.7,
     phase: rnd(0, 6.28),
-    head: pick(HEADS),
-    petal: pick(PETAL_COLS),
-    center: pick(CENTER_COLS),
+    rare: rare || null,
+    head: r ? r.head : pick(HEADS),
+    petal: r ? r.petal : pick(PETAL_COLS),
+    center: r ? r.center : pick(CENTER_COLS),
     stem: pick(STEM_COLS),
   };
+}
+
+// once in a while a seed turns out to be something special
+function rollRare() {
+  if (night && bloodMoon) return Math.random() < 0.15 ? 'blood' : null;
+  return Math.random() < 0.08 ? pick(['golden', 'moonlight', 'crystal', 'rainbow']) : null;
 }
 
 function sowSeed(atX) {
@@ -274,7 +300,7 @@ function sowSeed(atX) {
     if (x == null) { setMsg('씨앗 심을 자리가 없어요', '#b08d5a'); return; }
   }
   holes = holes.filter((h) => Math.abs(h.x - x) > 2); // fill the hole we plant over
-  packets.push({ x, age: 0, planted: false });
+  packets.push({ x, age: 0, planted: false, rare: rollRare() });
   setMsg('씨앗 봉투가 씨를 뿌립니다...', '#c9b27f');
 }
 
@@ -288,7 +314,11 @@ function updatePackets(dt) {
     if (k.age > 0.25 && k.age < 1.05 && Math.random() < 0.5) {
       seeds.push({ x: k.x + rnd(-1.5, 1.5), y: packetY() + 3, vy: rnd(7, 11) });
     }
-    if (!k.planted && k.age >= 1.1) { k.planted = true; plants.push(makePlant(k.x)); }
+    if (!k.planted && k.age >= 1.1) {
+      k.planted = true;
+      plants.push(makePlant(k.x, k.rare));
+      if (k.rare) setMsg('...방금 심은 씨앗이 희미하게 빛나고 있습니다', '#e8c95a', 5);
+    }
     if (k.age >= 1.6) packets.splice(i, 1);
   }
   for (let i = seeds.length - 1; i >= 0; i--) {
@@ -321,6 +351,8 @@ function updateCan(dt) {
       p.moisture = clamp(p.moisture + 0.8, 0, 1);
     }
   }
+  // a splash of water sends the gnome running too
+  if (gnome && gnome.state !== 'flee' && Math.abs(gnome.x - tip.x) <= 3) scareGnome();
   // three waterings cleanse a tombstone back to soil
   for (let i = tombstones.length - 1; i >= 0; i--) {
     const g = tombstones[i];
@@ -366,13 +398,19 @@ function pullFlower() {
     bigBouquetCount++;
     bouquets.push({
       x: clamp(p.x, 4, W - 5), y: baseRow() - 4, ttl: 3, big: true,
-      c1: pick(PETAL_COLS), c2: pick(PETAL_COLS), c3: pick(PETAL_COLS),
+      c1: p.rare ? p.petal : pick(PETAL_COLS), c2: p.rare ? p.center : pick(PETAL_COLS), c3: pick(PETAL_COLS),
     });
-    setMsg(`큰 꽃다발을 만들었습니다 — 지금까지 ${bigBouquetCount}개`, '#e87ba8');
+    if (p.rare) { // a fully-grown rare flower joins the collection
+      collection[p.rare] = (collection[p.rare] || 0) + 1;
+      saveCollection();
+      setMsg(`✦ 희귀한 ${RARE_TYPES[p.rare].name}을(를) 도감에 기록했습니다! (${Object.keys(collection).length}/5종)`, '#ffd166', 7);
+    } else {
+      setMsg(`큰 꽃다발을 만들었습니다 — 지금까지 ${bigBouquetCount}개`, '#e87ba8');
+    }
     if (bigBouquetCount > 0 && bigBouquetCount % 10 === 0) startChorus();
     return;
   }
-  setMsg('시든 꽃을 뽑았습니다', '#8fbf7f');
+  setMsg(p.rare ? '시들어버린 희귀꽃은 도감에 남지 않았습니다...' : '시든 꽃을 뽑았습니다', p.rare ? '#b08d5a' : '#8fbf7f');
 }
 
 // ── flower chorus: every 10 big bouquets ───────────────────
@@ -450,6 +488,67 @@ function triggerMandrake(p) {
   update(0);
   render();
   freezeUntil = Date.now() + FREEZE_MS;
+}
+
+// ── underground life ─────────────────────────────────────────
+function updateWorms(dt) {
+  const gy = soilTop();
+  const maxWorms = Math.max(2, Math.floor(W / 35));
+  if (worms.length < maxWorms && Math.random() < 0.01) {
+    worms.push({ x: rnd(4, W - 5), y: ri(gy + 2, H - 3), dir: pick([-1, 1]), phase: rnd(0, 6.28) });
+  }
+  for (const w of worms) {
+    if (Math.random() < 0.008) w.dir *= -1;
+    w.x += w.dir * 0.7 * dt;
+    if (w.x < 3) { w.x = 3; w.dir = 1; }
+    if (w.x > W - 4) { w.x = W - 4; w.dir = -1; }
+    if (Math.random() < 0.004) w.y = clamp(w.y + pick([-1, 1]), gy + 2, H - 3);
+  }
+}
+
+// the flower-thief gnome: tunnels in, tugs a flower under — chase it off with a click
+function updateGnome(dt) {
+  const gy = soilTop();
+  if (!gnome) {
+    const targets = plants.filter((p) => p.stage >= 2 && p.stage <= 3);
+    if (targets.length && !mandrake && Math.random() < 0.005 * dt) {
+      gnome = { x: pick([-3, W + 3]), y: gy + 2, target: pick(targets), state: 'tunnel', timer: 0 };
+      setMsg('...땅속에서 무언가 파고드는 소리가 납니다', '#b08d5a', 5);
+    }
+    return;
+  }
+  if (gnome.state === 'tunnel') {
+    if (!plants.includes(gnome.target)) { gnome.state = 'flee'; return; }
+    const dir = Math.sign(gnome.target.x - gnome.x) || 1;
+    gnome.x += dir * 5 * dt;
+    if (Math.abs(gnome.x - gnome.target.x) < 1) {
+      gnome.x = gnome.target.x;
+      gnome.state = 'steal';
+      gnome.timer = 6;
+      setMsg('!! 노움이 꽃을 잡아당깁니다 — 클릭해서 쫓아내세요 !!', '#ff9944', 6);
+    }
+  } else if (gnome.state === 'steal') {
+    if (!plants.includes(gnome.target)) { gnome.state = 'flee'; return; }
+    gnome.timer -= dt;
+    if (gnome.timer <= 0) {
+      const p = gnome.target;
+      plants.splice(plants.indexOf(p), 1);
+      holes.push({ x: p.x, until: Date.now() + 40000 });
+      setMsg('꽃이 땅속으로 끌려갔습니다...', '#d96b6b', 6);
+      gnome.state = 'flee';
+    }
+  } else { // flee
+    gnome.y = gy + 2;
+    gnome.x += (gnome.x < W / 2 ? -1 : 1) * 12 * dt;
+    if (gnome.x < -4 || gnome.x > W + 4) gnome = null;
+  }
+}
+
+function scareGnome() {
+  if (gnome && gnome.state !== 'flee') {
+    gnome.state = 'flee';
+    setMsg('노움이 찍— 소리를 내며 달아납니다!', '#8fbf7f', 5);
+  }
 }
 
 // ── night, blood moon, and darker visitors ──────────────────
@@ -630,6 +729,8 @@ function update(dt) {
 
   updateRaven(dt);
   updateReaper(dt);
+  updateWorms(dt);
+  updateGnome(dt);
 
   if (weather === 'sun' && !night) {
     if (flies.length < 2 && Math.random() < 0.01) spawnFly();
@@ -822,8 +923,18 @@ function drawGround() {
 
 function drawPlant(p) {
   const b = baseRow();
+  const gy = soilTop();
   const x = p.x;
-  if (p.stage === 0) { bset(x, b, '.', 137); return; }
+  // roots reach down into the visible soil
+  if (p.stage >= 1) bset(x, gy + 1, '|', 94);
+  if (p.stage >= 2 && soilDepth() >= 4) {
+    bset(x - 1, gy + 2, '/', 58); bset(x, gy + 2, '|', 94); bset(x + 1, gy + 2, '\\', 58);
+  }
+  // rare flowers sparkle from the moment they're planted
+  if (p.rare && p.stage < 3 && Math.floor(t * 2.5 + p.phase) % 4 === 0) {
+    bset(x + 1, b - 1 - p.stage, '*', 229);
+  }
+  if (p.stage === 0) { bset(x, b, '.', p.rare ? 229 : 137); return; }
   if (p.stage === 1) {
     bset(x - 1, b, '\\', p.stem); bset(x, b, '|', p.stem); bset(x + 1, b, '/', p.stem);
     return;
@@ -835,25 +946,36 @@ function drawPlant(p) {
   }
   if (p.stage === 3) {
     const dancing = p.danceUntil !== undefined && t < p.danceUntil;
+    const grabbed = gnome && gnome.state === 'steal' && gnome.target === p;
     let dx = clamp(Math.round(Math.sin(t * (dancing ? 10 : 1.3) + p.phase) * 1.2), -1, 1);
-    if (night && bloodMoon && !dancing) dx = (Math.floor(t * 9 + p.phase) % 3) - 1; // trembling
+    if ((grabbed || (night && bloodMoon)) && !dancing) dx = (Math.floor(t * 9 + p.phase) % 3) - 1; // trembling
     const hy = dancing && Math.floor(t * 6) % 2 === 0 ? b - 3 : b - 2; // hops while dancing
     bset(x - 1, b, '\\', p.stem); bset(x, b, '|', p.stem); bset(x + 1, b, '/', p.stem);
     bset(x, b - 1, '|', p.stem);
     if (hy === b - 3) bset(x, b - 2, '|', p.stem);
     if (hash(x, 7) % 2) bset(x - 1, b - 1, '\\', p.stem); else bset(x + 1, b - 1, '/', p.stem);
-    if (night && !dancing) {
-      bset(x - 1 + dx, hy, p.head[0], p.petal);
-      bset(x + dx, hy, '|', p.petal);
-      bset(x + 1 + dx, hy, p.head[2], p.petal);
+    // rare colors: rainbow cycles; moonlight glows and never closes at night
+    let petal = p.petal, center = p.center;
+    if (p.rare === 'rainbow') {
+      petal = PETAL_COLS[Math.floor(t * 3 + p.phase) % PETAL_COLS.length];
+      center = PETAL_COLS[Math.floor(t * 3 + p.phase + 3) % PETAL_COLS.length];
+    }
+    const staysOpen = dancing || p.rare === 'moonlight';
+    if (night && !staysOpen) {
+      bset(x - 1 + dx, hy, p.head[0], petal);
+      bset(x + dx, hy, '|', petal);
+      bset(x + 1 + dx, hy, p.head[2], petal);
     } else {
-      bset(x - 1 + dx, hy, p.head[0], p.petal);
-      bset(x + dx, hy, p.head[1], B + p.center);
-      bset(x + 1 + dx, hy, p.head[2], p.petal);
+      bset(x - 1 + dx, hy, p.head[0], petal);
+      bset(x + dx, hy, p.head[1], B + center);
+      bset(x + 1 + dx, hy, p.head[2], petal);
+    }
+    if (p.rare && Math.floor(t * 2 + p.phase) % 5 === 0) {
+      bset(x + 2 + dx, hy - 1, '*', B + center); // a glint above the rare bloom
     }
     if (dancing) { // sparkles fly off the dancing flower
-      if (Math.floor(t * 8) % 2 === 0) bset(x - 2 - dx, hy - 1, '*', B + p.center);
-      else bset(x + 2 + dx, hy - 1, '*', B + p.petal);
+      if (Math.floor(t * 8) % 2 === 0) bset(x - 2 - dx, hy - 1, '*', B + center);
+      else bset(x + 2 + dx, hy - 1, '*', B + petal);
     }
     return;
   }
@@ -861,6 +983,34 @@ function drawPlant(p) {
   bset(x, b - 1, "'", WILT_COLS.stem);
   bset(x + 1, b - 1, 'x', WILT_COLS.head);
   bset(x + 2, b, ',', WILT_COLS.petal);
+}
+
+function drawWorms() {
+  for (const w of worms) {
+    const x = Math.round(w.x), wig = Math.floor(t * 3 + w.phase) % 2;
+    bset(x - w.dir, w.y, wig ? '~' : '-', 138);
+    bset(x, w.y, wig ? '-' : '~', 174);
+    bset(x + w.dir, w.y, 'o', 174);
+  }
+}
+
+function drawGnome() {
+  if (!gnome) return;
+  const gy = soilTop(), x = Math.round(gnome.x);
+  if (gnome.state === 'steal') {
+    // surfaced beside the stem, tugging — hat first, wicked little face below
+    const tug = Math.floor(t * 6) % 2;
+    bset(x + 1, gy - 2 + tug, '^', B + 196);
+    bset(x + 1, gy - 1 + tug, 'o', 173);
+    bset(x, gy - 1 + tug, '-', 173); // its grabbing arm
+    if (Math.floor(t * 4) % 2) bset(x + 2, gy - 2, '!', 203);
+  } else {
+    // tunneling through the soil
+    const dir = gnome.state === 'flee' ? (gnome.x < W / 2 ? -1 : 1) : (Math.sign((gnome.target ? gnome.target.x : 0) - gnome.x) || 1);
+    btext(x - 1, gnome.y, dir > 0 ? '(o>' : '<o)', 173);
+    bset(x - dir * 2, gnome.y, '*', 94); // kicked-up dirt behind it
+    if (Math.floor(t * 5) % 2) bset(x, gy, '.', 95); // the ground stirs above
+  }
 }
 
 function drawBees() {
@@ -992,8 +1142,10 @@ function render() {
   drawBirds();
 
   drawGround();
+  drawWorms();
   drawTombstones();
   for (const p of plants) drawPlant(p);
+  drawGnome();
   drawSpirits();
   drawRaven();
   drawReaper();
@@ -1017,7 +1169,8 @@ function render() {
   document.getElementById('statusbar').innerHTML =
     `<b>${night ? '밤' : '낮'}</b> · ${weather === 'sun' ? '맑음' : '비'} · ` +
     `식물 <b>${plants.length}</b> · 개화 <b>${blooms}</b> · 시듦 <b>${wilts}</b>` +
-    ` · 꽃다발 <b>${bouquetCount}</b> · 큰 꽃다발 <b>${bigBouquetCount}</b>`;
+    ` · 꽃다발 <b>${bouquetCount}</b> · 큰 꽃다발 <b>${bigBouquetCount}</b>` +
+    ` · 도감 <b>${Object.keys(collection).length}/5</b>`;
 }
 
 const escCh = (ch) => (ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch);
@@ -1161,6 +1314,12 @@ function handleKey(k) {
   }
   else if (k === 'm') toggleBgm(true);
   else if (k === '0') toggleMute();
+  else if (k === 'c') {
+    const names = Object.entries(collection).map(([type, n]) => `${RARE_TYPES[type].name}×${n}`);
+    setMsg(names.length
+      ? `도감: ${names.join(' · ')} (${Object.keys(collection).length}/5종)`
+      : '아직 도감에 기록된 희귀꽃이 없습니다 — 반짝이는 씨앗을 찾아보세요', '#e8c95a', 7);
+  }
 }
 
 // ── global mute: music, ambience, and effect sounds ─────────
@@ -1311,6 +1470,10 @@ document.getElementById('screen').addEventListener('click', (e) => {
   const rect = e.currentTarget.getBoundingClientRect();
   const cx = Math.floor((e.clientX - rect.left - 6) / CELL.w); // 6px/2px = #screen padding
   const cy = Math.floor((e.clientY - rect.top - 2) / CELL.h);
+  if (gnome && gnome.state !== 'flee' && Math.abs(gnome.x - cx) <= 3 && cy >= soilTop() - 4) {
+    scareGnome();
+    return;
+  }
   if (raven && !raven.fleeing && Math.abs(raven.x - cx) <= 2 && cy >= soilTop() - 5) {
     setMsg('까악 —!', '#c0c0c0', 3);
     fleeRaven();
@@ -1339,13 +1502,19 @@ document.addEventListener('visibilitychange', () => {
 
 // tiny debug handle (console only)
 window.__jw = {
-  plants, flies, spirits, tombstones, startChorus, makePlant, pullFlower,
-  stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT, bloodMoon, raven: !!raven, reaper: !!reaper }),
+  plants, flies, spirits, tombstones, worms, startChorus, makePlant, pullFlower, scareGnome,
+  stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT, bloodMoon, raven: !!raven, reaper: !!reaper, gnome: gnome && gnome.state, collection }),
   dark: {
     raven: () => { raven = { x: Math.floor(W / 2), y: baseRow() - 3, stay: 20, fleeing: false, vx: 0 }; },
     reaper: () => { reaper = { x: -6, vx: 2.5 }; },
     bloodMoon: (v) => { night = true; bloodMoon = v; },
     tomb: (x) => { tombstones.push({ x, waterings: 0 }); },
+    gnome: () => {
+      const targets = plants.filter((p) => p.stage >= 2 && p.stage <= 3);
+      if (targets.length) gnome = { x: -3, y: soilTop() + 2, target: pick(targets), state: 'tunnel', timer: 0 };
+      return gnome && gnome.state;
+    },
+    rare: (type, x) => { plants.push(Object.assign(makePlant(x || 40, type), { stage: 3 })); },
   },
 };
 // re-measure once the embedded font finishes loading — its metrics differ from the fallback
