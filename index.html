@@ -36,12 +36,21 @@
     box-sizing: border-box;
   }
   #statusbar {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
     font-size: 12px;
     letter-spacing: 0.14em;
     color: var(--dim);
     text-transform: uppercase;
   }
-  #statusbar b { color: var(--ink); font-weight: 600; }
+  #statustext b { color: var(--ink); font-weight: 600; }
+  #resetbtn {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+    color: var(--dim); background: transparent;
+    border: 1px solid #3a4a3a; border-radius: 3px; padding: 3px 10px; cursor: pointer;
+    text-transform: uppercase; flex-shrink: 0;
+  }
+  #resetbtn:hover { color: var(--scream); border-color: var(--scream); }
+  #resetbtn:focus-visible { outline: 2px solid var(--fence); outline-offset: 2px; }
   #stage { position: relative; }
   #plate {
     position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
@@ -133,7 +142,7 @@
 <div id="intro">
   <div id="intro-page1">
     <div class="lines">
-      <p>이곳은 당신의 정원입니다. 여유로운 시간을 즐기세요</p>
+      <p id="intro-greeting">이곳은 당신의 정원입니다. 여유로운 시간을 즐기세요</p>
       <p>꽃을 뽑을 땐 주의하세요. 비명을 지를 수도 있습니다.</p>
     </div>
   </div>
@@ -161,7 +170,7 @@
 </div>
 
 <div id="app" hidden>
-  <div id="statusbar"></div>
+  <div id="statusbar"><span id="statustext"></span><button id="resetbtn" title="저장된 정원을 모두 지웁니다">RESET</button></div>
   <div id="stage">
     <div id="plate" hidden></div>
     <pre id="screen"></pre>
@@ -274,6 +283,64 @@ const RARE_TYPES = {
 };
 function saveCollection() {
   try { localStorage.setItem('jw-collection', JSON.stringify(collection)); } catch (e) {}
+}
+
+// ── persist the whole garden between visits ─────────────────
+let returning = false;
+try { returning = localStorage.getItem('jw-visited') === '1'; } catch (e) {}
+
+let resetting = false; // once true, no save path may write again
+function saveGarden() {
+  if (resetting) return;
+  try {
+    const snap = {
+      // only the flowers themselves matter for the scene; critters are transient
+      plants: plants.map((p) => ({
+        x: p.x, stage: p.stage, prog: p.prog, moisture: p.moisture, phase: p.phase,
+        rare: p.rare, head: p.head, petal: p.petal, center: p.center, stem: p.stem,
+        wiltedAt: p.wiltedAt !== undefined ? t - p.wiltedAt : undefined, // store age, not absolute t
+      })),
+      tombstones: tombstones.map((g) => ({ x: g.x, waterings: g.waterings })),
+      holes: holes.map((h) => ({ x: h.x, remain: h.until - Date.now() })),
+      weather, night, dayNightT,
+      bouquetCount, bigBouquetCount, pullsSinceMandrake,
+    };
+    localStorage.setItem('jw-garden', JSON.stringify(snap));
+    localStorage.setItem('jw-visited', '1');
+  } catch (e) {}
+}
+
+function loadGarden() {
+  let snap;
+  try { snap = JSON.parse(localStorage.getItem('jw-garden')); } catch (e) { return false; }
+  if (!snap || !Array.isArray(snap.plants)) return false;
+  plants = snap.plants.map((s) => ({
+    x: s.x, stage: s.stage, prog: s.prog || 0, moisture: s.moisture != null ? s.moisture : 0.7,
+    phase: s.phase != null ? s.phase : rnd(0, 6.28),
+    rare: s.rare || null,
+    head: s.head || pick(HEADS), petal: s.petal, center: s.center, stem: s.stem || pick(STEM_COLS),
+    wiltedAt: s.wiltedAt !== undefined ? t - s.wiltedAt : undefined,
+  }));
+  tombstones = (snap.tombstones || []).map((g) => ({ x: g.x, waterings: g.waterings || 0 }));
+  holes = (snap.holes || []).filter((h) => h.remain > 0).map((h) => ({ x: h.x, until: Date.now() + h.remain }));
+  weather = snap.weather === 'rain' ? 'rain' : 'sun';
+  night = !!snap.night;
+  dayNightT = snap.dayNightT || 0;
+  bouquetCount = snap.bouquetCount || 0;
+  bigBouquetCount = snap.bigBouquetCount || 0;
+  pullsSinceMandrake = snap.pullsSinceMandrake || 0;
+  return true;
+}
+
+function resetGarden() {
+  resetting = true; // block the pagehide/visibility autosave from re-writing
+  try {
+    localStorage.removeItem('jw-garden');
+    localStorage.removeItem('jw-visited');
+    localStorage.removeItem('jw-collection');
+    localStorage.removeItem('jw-name');
+  } catch (e) {}
+  location.reload();
 }
 let lastThirst = 0;
 let can = null;
@@ -1315,7 +1382,7 @@ function render() {
 
   const blooms = plants.filter((p) => p.stage === 3).length;
   const wilts = plants.filter((p) => p.stage === 4).length;
-  document.getElementById('statusbar').innerHTML =
+  document.getElementById('statustext').innerHTML =
     `<b>${night ? '밤' : '낮'}</b> · ${weather === 'sun' ? '맑음' : '비'} · ` +
     `식물 <b>${plants.length}</b> · 개화 <b>${blooms}</b> · 시듦 <b>${wilts}</b>` +
     ` · 꽃다발 <b>${bouquetCount}</b> · 큰 꽃다발 <b>${bigBouquetCount}</b>` +
@@ -1611,8 +1678,17 @@ function start() {
   resize();
   updatePlate(); // hang the saved nameplate back on the fence
   toggleBgm(false); // start the music quietly if bgm.m4a exists here
-  setMsg('S 를 눌러 첫 씨앗을 심어보세요', '#8fbf7f', 10);
+  const restored = loadGarden();
+  if (restored) {
+    for (const p of plants) p.x = clamp(p.x, 4, W - 5); // keep in bounds if the screen resized
+    tombstones.forEach((g) => { g.x = clamp(g.x, 3, W - 4); });
+    setMsg(gardenName ? `'${gardenName}'에 다시 오신 걸 환영합니다` : '당신의 정원이 그대로 기다리고 있었습니다', '#8fbf7f', 8);
+  } else {
+    setMsg('S 를 눌러 첫 씨앗을 심어보세요', '#8fbf7f', 10);
+  }
+  saveGarden(); // mark visited from this point on
   let last = Date.now();
+  let sinceSave = 0;
   setInterval(() => {
     const now = Date.now();
     if (freezeUntil > now) { last = now; return; }
@@ -1621,6 +1697,8 @@ function start() {
     last = now;
     update(dt);
     render();
+    sinceSave += dt;
+    if (sinceSave >= 8) { sinceSave = 0; saveGarden(); } // autosave every ~8s
   }, 1000 / 30);
 }
 
@@ -1655,6 +1733,18 @@ document.addEventListener('keydown', (e) => {
 });
 document.getElementById('namesave').addEventListener('click', saveGardenName);
 document.getElementById('intro').addEventListener('click', advanceIntro);
+
+// returning visitors get a warmer greeting
+if (returning) {
+  document.getElementById('intro-greeting').textContent =
+    gardenName ? `'${gardenName}'에 다시 돌아오셨군요!` : '다시 돌아오셨군요!';
+}
+
+// RESET wipes every saved value after a confirm
+document.getElementById('resetbtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (confirm('저장된 정원·도감·이름을 모두 지우고 처음부터 시작할까요?')) resetGarden();
+});
 document.querySelectorAll('#controls button').forEach((btn) => {
   btn.addEventListener('click', () => handleKey(btn.dataset.k));
 });
@@ -1691,6 +1781,7 @@ window.addEventListener('resize', () => { if (started && freezeUntil < Date.now(
 let hiddenPaused = [];
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    if (started) saveGarden(); // capture the garden before the tab is backgrounded/closed
     hiddenPaused = [...document.querySelectorAll('audio')].filter((a) => !a.paused);
     hiddenPaused.forEach((a) => a.pause());
   } else {
@@ -1698,6 +1789,7 @@ document.addEventListener('visibilitychange', () => {
     hiddenPaused = [];
   }
 });
+window.addEventListener('pagehide', () => { if (started) saveGarden(); });
 
 // tiny debug handle (console only)
 window.__jw = {
