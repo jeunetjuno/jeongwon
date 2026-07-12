@@ -223,6 +223,8 @@ let bouquets = [], bouquetCount = 0, bigBouquetCount = 0;
 let pullsSinceMandrake = 0;
 let dayNightT = 0;
 let chorusUntil = 0, chorusNotes = [], spirits = [];
+let raven = null, reaper = null, tombstones = [], bloodMoon = false;
+const TOMB_AFTER = 120; // wilted flowers left this long turn to stone
 let lastThirst = 0;
 let can = null;
 let mandrake = null;
@@ -261,7 +263,8 @@ function sowSeed(atX) {
   // holes don't block planting — sowing fills them back in
   const free = (x) => x >= 5 && x <= W - 6 &&
     plants.every((p) => Math.abs(p.x - x) >= 5) &&
-    packets.every((k) => Math.abs(k.x - x) >= 5);
+    packets.every((k) => Math.abs(k.x - x) >= 5) &&
+    tombstones.every((g) => Math.abs(g.x - x) >= 4); // stones stay until cleansed
   let x = null;
   if (atX != null) {
     for (const off of [0, 1, -1, 2, -2, 3, -3]) if (free(atX + off)) { x = atX + off; break; }
@@ -298,7 +301,7 @@ function updatePackets(dt) {
 function water() {
   if (!plants.length) { setMsg('아직 물 줄 것이 없어요', '#b08d5a'); return; }
   if (can) { setMsg('물뿌리개가 이미 나와 있어요...', '#6fb7d9'); return; }
-  can = { x: -12, watered: new Set() };
+  can = { x: -12, watered: new Set(), wateredT: new Set() };
   setMsg('물뿌리개가 나옵니다... 졸졸졸', '#6fb7d9');
 }
 
@@ -318,6 +321,18 @@ function updateCan(dt) {
       p.moisture = clamp(p.moisture + 0.8, 0, 1);
     }
   }
+  // three waterings cleanse a tombstone back to soil
+  for (let i = tombstones.length - 1; i >= 0; i--) {
+    const g = tombstones[i];
+    if (!can.wateredT.has(g) && Math.abs(g.x - tip.x) <= 2) {
+      can.wateredT.add(g);
+      g.waterings++;
+      if (g.waterings >= 3) {
+        tombstones.splice(i, 1);
+        setMsg('묘비가 정화되어 흙으로 돌아갑니다', '#a8d8b0', 5);
+      }
+    }
+  }
   if (can.x > W + 4) can = null;
 }
 
@@ -330,7 +345,8 @@ function pullFlower() {
   holes.push({ x: p.x, until: Date.now() + 40000 });
   if (p.stage >= 2) {
     pullsSinceMandrake++;
-    if (Math.random() < MANDRAKE_CHANCE || pullsSinceMandrake >= MANDRAKE_PITY) {
+    const chance = MANDRAKE_CHANCE * (night && bloodMoon ? 4 : 1); // the blood moon stirs them
+    if (Math.random() < chance || pullsSinceMandrake >= MANDRAKE_PITY) {
       pullsSinceMandrake = 0;
       triggerMandrake(p);
       return;
@@ -436,6 +452,65 @@ function triggerMandrake(p) {
   freezeUntil = Date.now() + FREEZE_MS;
 }
 
+// ── night, blood moon, and darker visitors ──────────────────
+function setNight(v) {
+  night = v;
+  dayNightT = 0;
+  if (night) {
+    bloodMoon = Math.random() < 0.1; // an ill omen, once in a while
+    if (bloodMoon) setMsg('핏빛 달이 떠올랐습니다... 꽃들이 떨고 있습니다', 'var(--scream)', 8);
+  } else {
+    if (bloodMoon) setMsg('핏빛 달이 저물고 아침이 왔습니다', '#e8c95a', 5);
+    bloodMoon = false;
+  }
+}
+
+function updateRaven(dt) {
+  if (raven) {
+    if (raven.fleeing) {
+      raven.x += raven.vx * dt;
+      raven.y -= 7 * dt;
+      if (raven.x < -4 || raven.x > W + 4 || raven.y < 0) raven = null;
+      return;
+    }
+    raven.stay -= dt;
+    if (raven.stay <= 0 || !night) fleeRaven();
+    return;
+  }
+  const wilts = plants.filter((p) => p.stage === 4).length;
+  if (night && weather === 'sun' && Math.random() < (0.012 + 0.01 * wilts) * dt) {
+    raven = { x: ri(4, W - 6), y: baseRow() - 3, stay: rnd(15, 25), fleeing: false, vx: 0 };
+    setMsg('어디선가 까마귀가 내려앉았습니다', '#8a8a8a', 5);
+  }
+}
+
+function fleeRaven() {
+  if (!raven || raven.fleeing) return;
+  raven.fleeing = true;
+  raven.y = baseRow() - 3;
+  raven.vx = (raven.x < W / 2 ? -1 : 1) * 9;
+}
+
+function updateReaper(dt) {
+  if (reaper) {
+    reaper.x += reaper.vx * dt;
+    // the dark gardener quietly harvests wilted flowers along its path
+    for (let i = plants.length - 1; i >= 0; i--) {
+      if (plants[i].stage === 4 && Math.abs(plants[i].x - reaper.x) < 1.5) plants.splice(i, 1);
+    }
+    if (reaper.x > W + 6) {
+      reaper = null;
+      setMsg('검은 형체는 시든 꽃과 함께 사라졌습니다', '#8a8a8a', 6);
+    }
+    return;
+  }
+  const wilts = plants.filter((p) => p.stage === 4).length;
+  if (night && wilts > 0 && Math.random() < 0.006 * dt) {
+    reaper = { x: -6, vx: 2.5 };
+    setMsg('...검은 형체가 정원에 들어섭니다', '#8a8a8a', 6);
+  }
+}
+
 // ── critters ─────────────────────────────────────────────────
 function spawnBee() {
   bees.push({
@@ -503,7 +578,17 @@ function update(dt) {
       if (p.prog >= STAGE_DUR[p.stage]) { p.stage++; p.prog = 0; }
     } else if (p.stage === 3) {
       p.prog += (1 + 1.5 * (1 - p.moisture)) * dt;
-      if (p.prog >= BLOOM_LIFE) { p.stage = 4; p.prog = 0; }
+      if (p.prog >= BLOOM_LIFE) { p.stage = 4; p.prog = 0; p.wiltedAt = t; }
+    }
+  }
+
+  // wilted flowers left too long turn to tombstones
+  for (let i = plants.length - 1; i >= 0; i--) {
+    const p = plants[i];
+    if (p.stage === 4 && p.wiltedAt !== undefined && t - p.wiltedAt > TOMB_AFTER) {
+      plants.splice(i, 1);
+      tombstones.push({ x: p.x, waterings: 0 });
+      setMsg('시든 꽃이 있던 자리에 작은 묘비가 생겼습니다...', '#8a8a8a', 6);
     }
   }
 
@@ -539,10 +624,12 @@ function update(dt) {
   // auto day/night cycle
   dayNightT += dt;
   if (dayNightT >= DAY_NIGHT_PERIOD) {
-    dayNightT = 0;
-    night = !night;
-    setMsg(night ? '해가 저물고 밤이 찾아옵니다...' : '아침이 밝아옵니다', night ? '#9a8fd0' : '#e8c95a', 5);
+    setNight(!night);
+    if (!bloodMoon) setMsg(night ? '해가 저물고 밤이 찾아옵니다...' : '아침이 밝아옵니다', night ? '#9a8fd0' : '#e8c95a', 5);
   }
+
+  updateRaven(dt);
+  updateReaper(dt);
 
   if (weather === 'sun' && !night) {
     if (flies.length < 2 && Math.random() < 0.01) spawnFly();
@@ -566,7 +653,7 @@ function update(dt) {
     f.y = clamp(f.y, 2, baseRow() - 2);
   }
 
-  if (night && weather === 'sun') {
+  if (night && weather === 'sun' && !bloodMoon) { // fireflies hide under the blood moon
     if (bugs.length < 4 && Math.random() < 0.02) {
       bugs.push({ x: rnd(4, W - 5), y: rnd(baseRow() - 8, baseRow() - 1), vx: rnd(-1.5, 1.5), vy: rnd(-0.5, 0.5), phase: rnd(0, 6.28) });
     }
@@ -624,14 +711,66 @@ function drawNightSky() {
       const h = hash(x * 7, y * 13);
       if (h % 53 === 0) {
         const tw = ((h >> 3) + Math.floor(t * 2)) % 5;
-        bset(x, y, tw === 0 ? '+' : '.', tw <= 1 ? 251 : 244);
+        if (bloodMoon) bset(x, y, tw === 0 ? '+' : '.', tw <= 1 ? 131 : 95); // reddened stars
+        else bset(x, y, tw === 0 ? '+' : '.', tw <= 1 ? 251 : 244);
       }
     }
   }
   const mx = W - 8, my = 3;
-  btext(mx - 1, my - 1, '.-.', 230);
-  btext(mx - 2, my, '(   )', 230);
-  btext(mx - 1, my + 1, "`-'", 230);
+  if (bloodMoon) {
+    const mc = Math.floor(t * 2) % 2 ? 196 : 124; // the moon pulses red
+    btext(mx - 1, my - 1, '.-.', mc);
+    btext(mx - 2, my, '(###)', mc);
+    btext(mx - 1, my + 1, "`-'", mc);
+  } else {
+    btext(mx - 1, my - 1, '.-.', 230);
+    btext(mx - 2, my, '(   )', 230);
+    btext(mx - 1, my + 1, "`-'", 230);
+  }
+}
+
+function drawTombstones() {
+  const gy = soilTop();
+  for (const g of tombstones) {
+    btext(g.x - 1, gy - 3, '.-.', 245);
+    bset(g.x - 1, gy - 2, '|', 245); bset(g.x, gy - 2, '+', 250); bset(g.x + 1, gy - 2, '|', 245);
+    btext(g.x - 1, gy - 1, ';;;', 240);
+    // at night a ghost flower wavers above the stone
+    if (night && Math.sin(t * 1.5 + g.x) > 0.2) {
+      bset(g.x - 1, gy - 5, '{', 189); bset(g.x, gy - 5, '|', 189); bset(g.x + 1, gy - 5, '}', 189);
+      bset(g.x, gy - 4, ':', 240);
+    }
+  }
+}
+
+function drawRaven() {
+  if (!raven) return;
+  if (raven.fleeing) {
+    btext(Math.round(raven.x) - 1, Math.round(raven.y), Math.floor(t * 6) % 2 ? '\\o/' : '-o-', 238);
+    return;
+  }
+  const x = raven.x, gy = soilTop();
+  const blink = Math.floor(t * 0.7) % 5 === 0;
+  btext(x, gy - 4, ',_', 238);
+  bset(x - 1, gy - 3, '(', 238);
+  bset(x, gy - 3, blink ? '-' : 'o', blink ? 238 : 196); // a red, unblinking eye
+  bset(x + 1, gy - 3, '>', 178);
+  btext(x - 1, gy - 2, '/))', 238);
+  btext(x, gy - 1, '``', 240);
+}
+
+function drawReaper() {
+  if (!reaper) return;
+  const x = Math.round(reaper.x), gy = soilTop();
+  btext(x + 4, gy - 5, '__', 250);
+  bset(x + 3, gy - 4, '/', 250);
+  bset(x, gy - 4, '_', 236);
+  btext(x - 1, gy - 3, '(_)', 236);
+  bset(x + 3, gy - 3, '|', 240);
+  btext(x - 1, gy - 2, '/|\\', 236);
+  bset(x + 3, gy - 2, '|', 240);
+  bset(x - 1, gy - 1, '"', 236); bset(x + 1, gy - 1, '"', 236);
+  bset(x + 3, gy - 1, '|', 240);
 }
 
 function drawClouds() {
@@ -696,7 +835,8 @@ function drawPlant(p) {
   }
   if (p.stage === 3) {
     const dancing = p.danceUntil !== undefined && t < p.danceUntil;
-    const dx = clamp(Math.round(Math.sin(t * (dancing ? 10 : 1.3) + p.phase) * 1.2), -1, 1);
+    let dx = clamp(Math.round(Math.sin(t * (dancing ? 10 : 1.3) + p.phase) * 1.2), -1, 1);
+    if (night && bloodMoon && !dancing) dx = (Math.floor(t * 9 + p.phase) % 3) - 1; // trembling
     const hy = dancing && Math.floor(t * 6) % 2 === 0 ? b - 3 : b - 2; // hops while dancing
     bset(x - 1, b, '\\', p.stem); bset(x, b, '|', p.stem); bset(x + 1, b, '/', p.stem);
     bset(x, b - 1, '|', p.stem);
@@ -852,8 +992,11 @@ function render() {
   drawBirds();
 
   drawGround();
+  drawTombstones();
   for (const p of plants) drawPlant(p);
   drawSpirits();
+  drawRaven();
+  drawReaper();
 
   for (const d of drops) bset(d.x, d.y, d.vy > 16 ? '|' : "'", d.col);
   for (const s of splashes) bset(s.x, s.y, '.', 45);
@@ -1006,9 +1149,8 @@ function handleKey(k) {
   else if (k === '1') { weather = 'sun'; setMsg(night ? '구름이 걷히고... 별빛' : '해가 나왔습니다', '#e8c95a'); }
   else if (k === '2') { weather = 'rain'; setMsg('비가 내리기 시작합니다...', '#6fb7d9'); }
   else if (k === 'n') {
-    night = !night;
-    dayNightT = 0; // manual flip restarts the 6-minute cycle
-    setMsg(night ? '달이 떠오릅니다... 반딧불이가 나와요' : '새로운 아침이 밝았습니다', night ? '#9a8fd0' : '#e8c95a');
+    setNight(!night); // also rolls the blood-moon omen
+    if (!bloodMoon) setMsg(night ? '달이 떠오릅니다... 반딧불이가 나와요' : '새로운 아침이 밝았습니다', night ? '#9a8fd0' : '#e8c95a');
   }
   else if (k === 'b') { spawnBirdFlock(); setMsg('새들이 정원 위를 지나갑니다', '#9db4c9'); }
   else if (k === 'f') {
@@ -1038,6 +1180,13 @@ let ambCurrent = null;
 
 function updateAmbience(dt) {
   if (!started || document.hidden) return; // backgrounded: visibilitychange owns the audio
+  if (night && bloodMoon && weather !== 'rain') { // the crickets fall silent under the blood moon
+    if (ambCurrent) {
+      for (const k of ['day', 'rain', 'night']) document.getElementById('amb-' + k).pause();
+      ambCurrent = null;
+    }
+    return;
+  }
   const want = weather === 'rain' ? 'rain' : night ? 'night' : 'day';
   if (want !== ambCurrent) {
     ambCurrent = want;
@@ -1162,6 +1311,11 @@ document.getElementById('screen').addEventListener('click', (e) => {
   const rect = e.currentTarget.getBoundingClientRect();
   const cx = Math.floor((e.clientX - rect.left - 6) / CELL.w); // 6px/2px = #screen padding
   const cy = Math.floor((e.clientY - rect.top - 2) / CELL.h);
+  if (raven && !raven.fleeing && Math.abs(raven.x - cx) <= 2 && cy >= soilTop() - 5) {
+    setMsg('까악 —!', '#c0c0c0', 3);
+    fleeRaven();
+    return;
+  }
   const bloom = plants.find((p) => p.stage === 3 && Math.abs(p.x - cx) <= 2 && cy >= baseRow() - 5);
   if (bloom) {
     bloom.danceUntil = t + 2.5;
@@ -1184,7 +1338,16 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // tiny debug handle (console only)
-window.__jw = { plants, flies, spirits, startChorus, makePlant, pullFlower, stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT }) };
+window.__jw = {
+  plants, flies, spirits, tombstones, startChorus, makePlant, pullFlower,
+  stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT, bloodMoon, raven: !!raven, reaper: !!reaper }),
+  dark: {
+    raven: () => { raven = { x: Math.floor(W / 2), y: baseRow() - 3, stay: 20, fleeing: false, vx: 0 }; },
+    reaper: () => { reaper = { x: -6, vx: 2.5 }; },
+    bloodMoon: (v) => { night = true; bloodMoon = v; },
+    tomb: (x) => { tombstones.push({ x, waterings: 0 }); },
+  },
+};
 // re-measure once the embedded font finishes loading — its metrics differ from the fallback
 if (document.fonts && document.fonts.ready) {
   document.fonts.ready.then(() => { if (started && freezeUntil < Date.now()) { resize(); render(); } });
