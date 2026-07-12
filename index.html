@@ -222,7 +222,7 @@ let packets = [], seeds = []; // seed-packet animation
 let bouquets = [], bouquetCount = 0, bigBouquetCount = 0;
 let pullsSinceMandrake = 0;
 let dayNightT = 0;
-let chorusUntil = 0, chorusNotes = [];
+let chorusUntil = 0, chorusNotes = [], spirits = [];
 let lastThirst = 0;
 let can = null;
 let mandrake = null;
@@ -360,25 +360,43 @@ function pullFlower() {
 }
 
 // ── flower chorus: every 10 big bouquets ───────────────────
+const SPIRIT_COLS = [189, 195, 224, 230, 153, 225]; // pale, ghostly pastels
+
 function startChorus() {
   chorusUntil = t + 9;
   setMsg('큰 꽃다발 10개! 꽃들이 다같이 춤추며 노래합니다', '#ffd166', 9);
+  // spirit flowers rise from the empty ground to join the song —
+  // the fewer living blooms, the more spirits come out
+  const blooms = plants.filter((p) => p.stage === 3).length;
+  const want = clamp(Math.floor(W / 12) - blooms, 2, 8);
+  for (let tries = 0; tries < 60 && spirits.length < want; tries++) {
+    const x = ri(5, W - 6);
+    if (plants.every((p) => Math.abs(p.x - x) >= 5) &&
+        spirits.every((s) => Math.abs(s.x - x) >= 5)) {
+      spirits.push({ x, born: t, phase: rnd(0, 6.28), col: pick(SPIRIT_COLS), head: pick(HEADS) });
+    }
+  }
   chorusSong();
 }
 
+function spawnNote(x) {
+  chorusNotes.push({
+    x: x + rnd(-1, 1), y: baseRow() - 4, ttl: rnd(2, 3.2),
+    vy: rnd(1.2, 2.4), phase: rnd(0, 6.28),
+    ch: pick(['#', 'b']), col: pick(PETAL_COLS), // sharps & flats as notes
+  });
+}
+
 function updateChorus(dt) {
-  if (t >= chorusUntil) return;
+  if (t >= chorusUntil) { spirits.length = 0; return; }
   for (const p of plants) {
     if (p.stage === 3) {
       p.danceUntil = t + 0.5; // keep everyone dancing
-      if (Math.random() < 0.04) {
-        chorusNotes.push({
-          x: p.x + rnd(-1, 1), y: baseRow() - 4, ttl: rnd(2, 3.2),
-          vy: rnd(1.2, 2.4), phase: rnd(0, 6.28),
-          ch: pick(['#', 'b']), col: pick(PETAL_COLS), // sharps & flats as notes
-        });
-      }
+      if (Math.random() < 0.04) spawnNote(p.x);
     }
+  }
+  for (const s of spirits) {
+    if (t - s.born > 0.5 && Math.random() < 0.04) spawnNote(s.x);
   }
 }
 
@@ -457,11 +475,14 @@ function updateBirds(dt) {
   }
 }
 
+const MAX_FLIES = 4;
+
 function spawnFly() {
   flies.push({
     x: rnd(2, W - 3), y: rnd(3, baseRow() - 4),
     vx: pick([-1, 1]) * rnd(2, 4), phase: rnd(0, 6.28),
     col: pick(BUTTERFLY_COLS),
+    age: 0, life: rnd(20, 35), leaving: false,
   });
 }
 
@@ -523,9 +544,19 @@ function update(dt) {
   } else if (flies.length && Math.random() < 0.02) {
     flies.pop(); // butterflies drift off in rain or at night
   }
-  for (const f of flies) {
+  for (let i = flies.length - 1; i >= 0; i--) {
+    const f = flies[i];
+    f.age += dt;
+    if (!f.leaving && f.age > f.life) { // old butterflies head for the edge
+      f.leaving = true;
+      f.vx = (f.x < W / 2 ? -1 : 1) * rnd(4, 6);
+    }
     f.x += f.vx * dt;
-    if (f.x < 2 || f.x > W - 3) f.vx *= -1;
+    if (f.leaving) {
+      if (f.x < -2 || f.x > W + 2) { flies.splice(i, 1); continue; }
+    } else if (f.x < 2 || f.x > W - 3) {
+      f.vx *= -1;
+    }
     f.y += Math.sin(t * 2.2 + f.phase) * 2.4 * dt;
     f.y = clamp(f.y, 2, baseRow() - 2);
   }
@@ -752,6 +783,27 @@ function drawNotes() {
   for (const n of chorusNotes) bset(n.x, n.y, n.ch, B + n.col);
 }
 
+function drawSpirits() {
+  const b = baseRow();
+  for (const s of spirits) {
+    const grow = t - s.born;
+    if (grow < 0.5) { // rising from the soil
+      bset(s.x - 1, b, '\\', 65); bset(s.x, b, '|', 65); bset(s.x + 1, b, '/', 65);
+      continue;
+    }
+    const fading = t > chorusUntil - 1;
+    const pc = fading ? 240 : s.col;
+    const dx = clamp(Math.round(Math.sin(t * 10 + s.phase) * 1.2), -1, 1);
+    const hy = Math.floor(t * 6 + s.phase) % 2 === 0 ? b - 3 : b - 2;
+    bset(s.x - 1, b, '\\', 65); bset(s.x, b, '|', 65); bset(s.x + 1, b, '/', 65);
+    bset(s.x, b - 1, '|', 65);
+    if (hy === b - 3) bset(s.x, b - 2, '|', 65);
+    bset(s.x - 1 + dx, hy, s.head[0], pc);
+    bset(s.x + dx, hy, s.head[1], fading ? 240 : B + pc);
+    bset(s.x + 1 + dx, hy, s.head[2], pc);
+  }
+}
+
 function drawMandrake() {
   if (!mandrake) return;
   const mx = mandrake.x, gy = soilTop();
@@ -787,6 +839,7 @@ function render() {
 
   drawGround();
   for (const p of plants) drawPlant(p);
+  drawSpirits();
 
   for (const d of drops) bset(d.x, d.y, d.vy > 16 ? '|' : "'", d.col);
   for (const s of splashes) bset(s.x, s.y, '.', 45);
@@ -944,7 +997,12 @@ function handleKey(k) {
     setMsg(night ? '달이 떠오릅니다... 반딧불이가 나와요' : '새로운 아침이 밝았습니다', night ? '#9a8fd0' : '#e8c95a');
   }
   else if (k === 'b') { spawnBirdFlock(); setMsg('새들이 정원 위를 지나갑니다', '#9db4c9'); }
-  else if (k === 'f') { spawnFly(); spawnFly(); setMsg('나비가 날아듭니다', '#e8a0c8'); }
+  else if (k === 'f') {
+    if (flies.length >= MAX_FLIES) { setMsg('나비는 이미 충분히 많아요', '#b08d5a'); return; }
+    spawnFly();
+    if (flies.length < MAX_FLIES) spawnFly();
+    setMsg('나비가 날아듭니다', '#e8a0c8');
+  }
   else if (k === 'm') toggleBgm(true);
   else if (k === '0') toggleMute();
 }
@@ -1112,7 +1170,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // tiny debug handle (console only)
-window.__jw = { plants, startChorus, makePlant, pullFlower, stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT }) };
+window.__jw = { plants, flies, spirits, startChorus, makePlant, pullFlower, stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT }) };
 // re-measure once the embedded font finishes loading — its metrics differ from the fallback
 if (document.fonts && document.fonts.ready) {
   document.fonts.ready.then(() => { if (started && freezeUntil < Date.now()) { resize(); render(); } });
