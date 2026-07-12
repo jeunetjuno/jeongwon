@@ -42,6 +42,23 @@
     text-transform: uppercase;
   }
   #statusbar b { color: var(--ink); font-weight: 600; }
+  #stage { position: relative; }
+  #plate {
+    position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+    background: #2a1f12; border: 1px solid var(--fence); color: #e8d5b0;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+    padding: 2px 12px; border-radius: 2px; z-index: 2; white-space: nowrap;
+  }
+  #namebox { display: flex; gap: 6px; }
+  #namebox[hidden] { display: none; } /* author display:flex must not defeat the hidden attribute */
+  #namebox input {
+    font-family: var(--mono); font-size: 13px; color: var(--ink);
+    background: var(--panel); border: 1px solid #2e5a3d; border-radius: 3px; padding: 6px 10px;
+  }
+  #namebox button {
+    font-family: var(--mono); font-size: 13px; color: var(--ink);
+    background: transparent; border: 1px solid var(--fence); border-radius: 3px; padding: 6px 12px; cursor: pointer;
+  }
   #screen {
     font-family: var(--mono); /* UA default `pre{font-family:monospace}` beats body inheritance */
     margin: 0;
@@ -133,6 +150,8 @@
       <span class="k">M</span><span class="d">배경음악 켜기 / 끄기</span>
       <span class="k">0</span><span class="d">전체 무음 (음악·환경음·효과음 모두)</span>
       <span class="k">C</span><span class="d">희귀꽃 도감 — 반짝이는 씨앗을 끝까지 키워 뽑으면 기록됩니다</span>
+      <span class="k">P</span><span class="d">정원에 이름을 지어 울타리에 문패 달기</span>
+      <span class="k">밤하늘 별똥별</span><span class="d">떨어지는 동안 클릭하면 소원이 이뤄집니다</span>
       <span class="k">큰 꽃다발 10개</span><span class="d">...모아 보면 알게 됩니다</span>
       <span class="warn">땅속의 무언가가 꽃을 노립니다 — 잡아당기면 클릭해서 쫓아내세요.</span>
       <span class="warn">그리고 — 아주 가끔, 뽑힌 꽃 밑에서 무언가 비명을 지릅니다.</span>
@@ -143,7 +162,14 @@
 
 <div id="app" hidden>
   <div id="statusbar"></div>
-  <pre id="screen"></pre>
+  <div id="stage">
+    <div id="plate" hidden></div>
+    <pre id="screen"></pre>
+  </div>
+  <div id="namebox" hidden>
+    <input id="nameinput" maxlength="16" placeholder="정원의 이름을 지어주세요">
+    <button id="namesave">걸기</button>
+  </div>
   <div id="msgline"></div>
   <div id="controls">
     <button data-k="s"><b>S</b> 씨앗 뿌리기</button>
@@ -155,9 +181,10 @@
     <button data-k="b"><b>B</b> 새</button>
     <button data-k="f"><b>F</b> 나비</button>
     <button data-k="m"><b>M</b> 음악</button>
+    <button data-k="p"><b>P</b> 문패</button>
     <button data-k="0" id="mutebtn"><b>0</b> 무음</button>
   </div>
-  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m / c / 0 · 터치: 빈 땅 = 씨앗, 핀 꽃 = 춤, 침입자 = 격퇴</div>
+  <div id="keyhint">keyboard: s / w / x / 1 / 2 / n / b / f / m / c / p / 0 · 터치: 빈 땅 = 씨앗, 핀 꽃 = 춤, 침입자 = 격퇴, 별똥별 = 소원</div>
 </div>
 <audio id="bgm-day" src="bgm-day.m4a" loop preload="none"></audio>
 <audio id="bgm-night" src="bgm-night.m4a" loop preload="none"></audio>
@@ -230,6 +257,11 @@ const TOMB_AFTER = 120; // wilted flowers left this long turn to stone
 
 // ── underground & rare flowers ──────────────────────────────
 let worms = [], gnome = null;
+let stars = [];        // shooting stars — click one to make a wish
+let rainbowUntil = 0;  // shown after rain clears in daylight
+let ladybug = null;    // a lucky ladybug; its flower doesn't wilt
+let gardenName = '';
+try { gardenName = localStorage.getItem('jw-name') || ''; } catch (e) {}
 let collection = {}; // rare type → count, persisted in localStorage
 try { collection = JSON.parse(localStorage.getItem('jw-collection')) || {}; } catch (e) {}
 const RARE_TYPES = {
@@ -551,6 +583,63 @@ function scareGnome() {
   }
 }
 
+// ── small wonders: shooting stars, rainbow, ladybug ─────────
+function updateStars(dt) {
+  if (night && !bloodMoon && weather === 'sun' && stars.length === 0 && Math.random() < 0.025 * dt) {
+    stars.push({ x: rnd(W * 0.2, W * 0.85), y: rnd(2, 4), vx: pick([-1, 1]) * rnd(9, 13), vy: rnd(4, 6), ttl: 3 });
+  }
+  for (let i = stars.length - 1; i >= 0; i--) {
+    const s = stars[i];
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.ttl -= dt;
+    if (s.ttl <= 0 || s.y > soilTop() - 6 || s.x < 2 || s.x > W - 3) stars.splice(i, 1);
+  }
+}
+
+function grantWish(idx) {
+  stars.splice(idx, 1);
+  const gift = pick(['rare', 'water', 'butterflies']);
+  if (gift === 'rare') {
+    // a shimmering seed falls where there's room
+    for (let tries = 0; tries < 30; tries++) {
+      const x = ri(5, W - 6);
+      if (plants.every((p) => Math.abs(p.x - x) >= 5) && packets.every((k) => Math.abs(k.x - x) >= 5) &&
+          tombstones.every((g) => Math.abs(g.x - x) >= 4)) {
+        packets.push({ x, age: 0, planted: false, rare: pick(['golden', 'moonlight', 'crystal', 'rainbow']) });
+        setMsg('소원이 이루어졌습니다 — 반짝이는 씨앗이 떨어집니다!', '#ffd166', 7);
+        return;
+      }
+    }
+  }
+  if (gift === 'water' || gift === 'rare') { // rare fallback when the garden is full
+    for (const p of plants) p.moisture = 1;
+    setMsg('소원이 이루어졌습니다 — 촉촉한 이슬이 정원을 적십니다', '#6fb7d9', 7);
+    return;
+  }
+  spawnFly(); spawnFly(); spawnFly();
+  setMsg('소원이 이루어졌습니다 — 나비 떼가 몰려옵니다!', '#e8a0c8', 7);
+}
+
+function updateLadybug(dt) {
+  if (ladybug) {
+    if (!plants.includes(ladybug.plant) || ladybug.plant.stage < 2 || ladybug.plant.stage > 3) { ladybug = null; return; }
+    if (ladybug.state === 'climb') {
+      ladybug.prog += dt / 15; // a slow, patient climb
+      if (ladybug.prog >= 1) { ladybug.state = 'sit'; ladybug.sit = rnd(30, 60); }
+    } else {
+      ladybug.sit -= dt;
+      if (ladybug.sit <= 0) ladybug = null; // flies off quietly
+    }
+    return;
+  }
+  const perches = plants.filter((p) => p.stage >= 2 && p.stage <= 3);
+  if (perches.length && weather === 'sun' && !night && Math.random() < 0.008 * dt) {
+    ladybug = { plant: pick(perches), prog: 0, state: 'climb', sit: 0 };
+    setMsg('무당벌레가 날아와 앉았습니다 — 행운의 징조!', '#ff6b6b', 5);
+  }
+}
+
 // ── night, blood moon, and darker visitors ──────────────────
 function setNight(v) {
   night = v;
@@ -675,7 +764,7 @@ function update(dt) {
     if (p.stage < 3) {
       p.prog += dt; // fixed clock so stage times match STAGE_DUR exactly
       if (p.prog >= STAGE_DUR[p.stage]) { p.stage++; p.prog = 0; }
-    } else if (p.stage === 3) {
+    } else if (p.stage === 3 && !(ladybug && ladybug.plant === p)) { // a ladybug's flower never wilts
       p.prog += (1 + 1.5 * (1 - p.moisture)) * dt;
       if (p.prog >= BLOOM_LIFE) { p.stage = 4; p.prog = 0; p.wiltedAt = t; }
     }
@@ -731,6 +820,8 @@ function update(dt) {
   updateReaper(dt);
   updateWorms(dt);
   updateGnome(dt);
+  updateStars(dt);
+  updateLadybug(dt);
 
   if (weather === 'sun' && !night) {
     if (flies.length < 2 && Math.random() < 0.01) spawnFly();
@@ -994,6 +1085,40 @@ function drawWorms() {
   }
 }
 
+function drawStars() {
+  for (const s of stars) {
+    const x = Math.round(s.x), y = Math.round(s.y), d = Math.sign(s.vx);
+    bset(x, y, '*', B + 231);
+    bset(x - d, y, '-', 250);         // bright trail
+    bset(x - d * 2, y - 1, '.', 244); // fading behind
+  }
+}
+
+function drawRainbow() {
+  if (t >= rainbowUntil || night || weather !== 'sun') return;
+  const fade = rainbowUntil - t < 2;
+  const bands = [203, 215, 229, 120, 81, 105, 183]; // soft 7 colors for the dark sky
+  const cx = Math.floor(W / 2), cy = soilTop();
+  const Rx = Math.floor(W * 0.38), Ry = Math.max(7, Math.floor((cy - 2) * 0.9));
+  for (let x = cx - Rx; x <= cx + Rx; x++) {
+    const nx = (x - cx) / Rx;
+    const base = Math.sqrt(Math.max(0, 1 - nx * nx));
+    for (let i = 0; i < 7; i++) {
+      const y = Math.round(cy - (Ry - i) * base);
+      if (y > 0 && y < cy) bset(x, y, '~', fade ? 240 : bands[i]);
+    }
+  }
+}
+
+function drawLadybug() {
+  if (!ladybug) return;
+  const p = ladybug.plant, b = baseRow();
+  const top = p.stage === 3 ? 2 : 1;
+  const y = ladybug.state === 'sit' ? b - top : Math.round(b - ladybug.prog * top);
+  const lx = p.x + (ladybug.state === 'sit' ? 1 : (Math.floor(t * 2) % 2 ? 0 : 1));
+  bset(lx, y, 'o', B + (Math.floor(t * 3) % 2 ? 196 : 160)); // little red shell
+}
+
 function drawGnome() {
   if (!gnome) return;
   const gy = soilTop(), x = Math.round(gnome.x);
@@ -1138,13 +1263,16 @@ function render() {
 
   if (night) { if (weather === 'sun') drawNightSky(); }
   else if (weather === 'sun') drawSun();
+  drawRainbow();
   drawClouds();
   drawBirds();
+  drawStars();
 
   drawGround();
   drawWorms();
   drawTombstones();
   for (const p of plants) drawPlant(p);
+  drawLadybug();
   drawGnome();
   drawSpirits();
   drawRaven();
@@ -1299,7 +1427,16 @@ function handleKey(k) {
   if (k === 's') sowSeed();
   else if (k === 'w') water();
   else if (k === 'x') pullFlower();
-  else if (k === '1') { weather = 'sun'; setMsg(night ? '구름이 걷히고... 별빛' : '해가 나왔습니다', '#e8c95a'); }
+  else if (k === '1') {
+    const wasRain = weather === 'rain';
+    weather = 'sun';
+    if (wasRain && !night) {
+      rainbowUntil = t + 12;
+      setMsg('비가 그치자 무지개가 떠올랐습니다', '#e8a0c8', 6);
+    } else {
+      setMsg(night ? '구름이 걷히고... 별빛' : '해가 나왔습니다', '#e8c95a');
+    }
+  }
   else if (k === '2') { weather = 'rain'; setMsg('비가 내리기 시작합니다...', '#6fb7d9'); }
   else if (k === 'n') {
     setNight(!night); // also rolls the blood-moon omen
@@ -1320,6 +1457,35 @@ function handleKey(k) {
       ? `도감: ${names.join(' · ')} (${Object.keys(collection).length}/5종)`
       : '아직 도감에 기록된 희귀꽃이 없습니다 — 반짝이는 씨앗을 찾아보세요', '#e8c95a', 7);
   }
+  else if (k === 'p') toggleNameBox();
+}
+
+// ── garden nameplate, hung on the fence ─────────────────────
+function updatePlate() {
+  const plate = document.getElementById('plate');
+  if (gardenName) { plate.textContent = `✿ ${gardenName} ✿`; plate.hidden = false; }
+  else plate.hidden = true;
+}
+
+function toggleNameBox() {
+  const box = document.getElementById('namebox');
+  box.hidden = !box.hidden;
+  if (!box.hidden) {
+    const input = document.getElementById('nameinput');
+    input.value = gardenName;
+    input.focus();
+  }
+}
+
+function saveGardenName() {
+  gardenName = document.getElementById('nameinput').value.trim();
+  try {
+    if (gardenName) localStorage.setItem('jw-name', gardenName);
+    else localStorage.removeItem('jw-name');
+  } catch (e) {}
+  updatePlate();
+  document.getElementById('namebox').hidden = true;
+  setMsg(gardenName ? `이제 이곳은 '${gardenName}' 입니다` : '문패를 내렸습니다', '#e8d5b0', 5);
 }
 
 // ── global mute: music, ambience, and effect sounds ─────────
@@ -1421,6 +1587,7 @@ function start() {
   document.getElementById('app').hidden = false;
   try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
   resize();
+  updatePlate(); // hang the saved nameplate back on the fence
   toggleBgm(false); // start the music quietly if bgm.m4a exists here
   setMsg('S 를 눌러 첫 씨앗을 심어보세요', '#8fbf7f', 10);
   let last = Date.now();
@@ -1453,12 +1620,18 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.code === 'Enter') advanceIntro();
     return;
   }
+  if (e.target && e.target.id === 'nameinput') { // typing the garden's name, not playing
+    if (e.key === 'Enter') saveGardenName();
+    if (e.key === 'Escape') document.getElementById('namebox').hidden = true;
+    return;
+  }
   // use the physical key (e.code) so keys work with the Korean IME active (s → ㄴ 등)
   let k = e.key.toLowerCase();
   if (e.code && e.code.startsWith('Key')) k = e.code.slice(3).toLowerCase();
   else if (e.code && e.code.startsWith('Digit')) k = e.code.slice(5);
   handleKey(k);
 });
+document.getElementById('namesave').addEventListener('click', saveGardenName);
 document.getElementById('intro').addEventListener('click', advanceIntro);
 document.querySelectorAll('#controls button').forEach((btn) => {
   btn.addEventListener('click', () => handleKey(btn.dataset.k));
@@ -1470,6 +1643,9 @@ document.getElementById('screen').addEventListener('click', (e) => {
   const rect = e.currentTarget.getBoundingClientRect();
   const cx = Math.floor((e.clientX - rect.left - 6) / CELL.w); // 6px/2px = #screen padding
   const cy = Math.floor((e.clientY - rect.top - 2) / CELL.h);
+  // catch a falling star to make a wish
+  const si = stars.findIndex((s) => Math.abs(s.x - cx) <= 3 && Math.abs(s.y - cy) <= 2);
+  if (si >= 0) { grantWish(si); return; }
   if (gnome && gnome.state !== 'flee' && Math.abs(gnome.x - cx) <= 3 && cy >= soilTop() - 4) {
     scareGnome();
     return;
@@ -1502,8 +1678,13 @@ document.addEventListener('visibilitychange', () => {
 
 // tiny debug handle (console only)
 window.__jw = {
-  plants, flies, spirits, tombstones, worms, startChorus, makePlant, pullFlower, scareGnome,
-  stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT, bloodMoon, raven: !!raven, reaper: !!reaper, gnome: gnome && gnome.state, collection }),
+  plants, flies, spirits, tombstones, worms, stars, startChorus, makePlant, pullFlower, scareGnome, grantWish,
+  stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT, bloodMoon, raven: !!raven, reaper: !!reaper, gnome: gnome && gnome.state, collection, ladybug: ladybug && ladybug.state, rainbow: t < rainbowUntil, gardenName }),
+  wonder: {
+    star: () => { stars.push({ x: W * 0.5, y: 3, vx: 10, vy: 4, ttl: 3 }); },
+    ladybug: () => { const ps = plants.filter((p) => p.stage >= 2 && p.stage <= 3); if (ps.length) ladybug = { plant: pick(ps), prog: 0, state: 'climb', sit: 0 }; return !!ladybug; },
+    rainbow: () => { rainbowUntil = t + 12; },
+  },
   dark: {
     raven: () => { raven = { x: Math.floor(W / 2), y: baseRow() - 3, stay: 20, fleeing: false, vx: 0 }; },
     reaper: () => { reaper = { x: -6, vx: 2.5 }; },
