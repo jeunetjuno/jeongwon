@@ -256,12 +256,12 @@ function makePlant(x) {
 }
 
 function sowSeed(atX) {
-  const maxP = Math.floor((W - 10) / 7);
+  const maxP = Math.floor((W - 10) / 5.5); // 55-col mobile → 8 plants, wider → more
   if (plants.length + packets.length >= maxP) { setMsg('정원이 가득 찼어요', '#b08d5a'); return; }
+  // holes don't block planting — sowing fills them back in
   const free = (x) => x >= 5 && x <= W - 6 &&
     plants.every((p) => Math.abs(p.x - x) >= 5) &&
-    packets.every((k) => Math.abs(k.x - x) >= 5) &&
-    holes.every((h) => Math.abs(h.x - x) >= 4);
+    packets.every((k) => Math.abs(k.x - x) >= 5);
   let x = null;
   if (atX != null) {
     for (const off of [0, 1, -1, 2, -2, 3, -3]) if (free(atX + off)) { x = atX + off; break; }
@@ -270,6 +270,7 @@ function sowSeed(atX) {
     for (let i = 0; i < 30 && x == null; i++) { const c = ri(5, W - 6); if (free(c)) x = c; }
     if (x == null) { setMsg('씨앗 심을 자리가 없어요', '#b08d5a'); return; }
   }
+  holes = holes.filter((h) => Math.abs(h.x - x) > 2); // fill the hole we plant over
   packets.push({ x, age: 0, planted: false });
   setMsg('씨앗 봉투가 씨를 뿌립니다...', '#c9b27f');
 }
@@ -964,7 +965,7 @@ const AMB_VOL = { day: 0.16, rain: 0.2, night: 0.15 };
 let ambCurrent = null;
 
 function updateAmbience(dt) {
-  if (!started) return;
+  if (!started || document.hidden) return; // backgrounded: visibilitychange owns the audio
   const want = weather === 'rain' ? 'rain' : night ? 'night' : 'day';
   if (want !== ambCurrent) {
     ambCurrent = want;
@@ -993,14 +994,22 @@ let bgmCurrent = null;
 function bgmEl(k) { return document.getElementById('bgm-' + k); }
 
 function updateBgm() {
-  if (!started || !bgmOn) return;
+  if (!started || !bgmOn || document.hidden) return; // backgrounded: stay silent
+  // the flower chorus takes the stage: bgm pauses, then resumes where it left off
+  if (t < chorusUntil) {
+    if (bgmCurrent) bgmEl(bgmCurrent).pause();
+    return;
+  }
   const want = night ? 'night' : 'day';
-  if (want === bgmCurrent) return;
-  bgmCurrent = want;
-  bgmEl(want === 'day' ? 'night' : 'day').pause();
   const el = bgmEl(want);
-  el.volume = BGM_VOL;
-  el.play().catch(() => {});
+  if (want !== bgmCurrent) {
+    if (bgmCurrent) bgmEl(bgmCurrent).pause();
+    bgmCurrent = want;
+    el.volume = BGM_VOL;
+    el.play().catch(() => {});
+  } else if (el.paused) {
+    el.play().catch(() => {}); // resume after the chorus ends
+  }
 }
 
 function toggleBgm(verbose) {
@@ -1090,6 +1099,18 @@ document.getElementById('screen').addEventListener('click', (e) => {
   if (cy >= 1 && cy <= H - 1) sowSeed(clamp(cx, 5, W - 6));
 });
 window.addEventListener('resize', () => { if (started && freezeUntil < Date.now()) { resize(); render(); } });
+// mobile: pause every sound when the app/tab goes to background, resume on return
+let hiddenPaused = [];
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    hiddenPaused = [...document.querySelectorAll('audio')].filter((a) => !a.paused);
+    hiddenPaused.forEach((a) => a.pause());
+  } else {
+    hiddenPaused.forEach((a) => a.play().catch(() => {}));
+    hiddenPaused = [];
+  }
+});
+
 // tiny debug handle (console only)
 window.__jw = { plants, startChorus, makePlant, pullFlower, stats: () => ({ bouquetCount, bigBouquetCount, pullsSinceMandrake, night, dayNightT }) };
 // re-measure once the embedded font finishes loading — its metrics differ from the fallback
