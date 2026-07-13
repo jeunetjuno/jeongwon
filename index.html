@@ -1592,33 +1592,25 @@ function toggleMute() {
 const AMB_VOL = { day: 0.16, rain: 0.2, night: 0.15 };
 let ambCurrent = null;
 
+// idempotent self-heal: every frame, exactly the track for the current
+// state plays (fading in); every other ambient track is paused. This makes
+// the audio a pure function of game state — it can never get stuck wrong,
+// and it re-establishes itself after a background/foreground cycle.
 function updateAmbience(dt) {
-  if (!started || document.hidden) return; // backgrounded: visibilitychange owns the audio
-  if (night && bloodMoon && weather !== 'rain') { // the crickets fall silent under the blood moon
-    if (ambCurrent) {
-      for (const k of ['day', 'rain', 'night']) document.getElementById('amb-' + k).pause();
-      ambCurrent = null;
-    }
-    return;
-  }
-  const want = weather === 'rain' ? 'rain' : night ? 'night' : 'day';
-  if (want !== ambCurrent) {
-    ambCurrent = want;
-    for (const k of ['day', 'rain', 'night']) {
-      const el = document.getElementById('amb-' + k);
-      if (k === want) {
-        el.volume = 0; // fades in below
-        el.play().catch(() => {});
-      } else if (!el.paused) {
-        el.pause();
-      }
+  if (!started || document.hidden) return; // backgrounded: visibilitychange pauses everything
+  // crickets fall silent under a clear blood moon; otherwise match weather → night → day
+  const want = (night && bloodMoon && weather !== 'rain') ? null
+    : weather === 'rain' ? 'rain' : night ? 'night' : 'day';
+  for (const k of ['day', 'rain', 'night']) {
+    const el = document.getElementById('amb-' + k);
+    if (k === want) {
+      if (el.paused) { el.volume = 0; el.play().catch(() => {}); }        // (re)start & fade in
+      else if (el.volume < AMB_VOL[k]) el.volume = Math.min(AMB_VOL[k], el.volume + 0.12 * dt);
+    } else if (!el.paused) {
+      el.pause();
     }
   }
-  // gentle fade-in toward the target volume
-  const el = document.getElementById('amb-' + ambCurrent);
-  if (!el.paused && el.volume < AMB_VOL[ambCurrent]) {
-    el.volume = Math.min(AMB_VOL[ambCurrent], el.volume + 0.12 * dt);
-  }
+  ambCurrent = want;
 }
 
 // ── background music: Zelda's Lullaby by day, Mirror of Twilight at night ─
@@ -1628,23 +1620,21 @@ let bgmCurrent = null;
 
 function bgmEl(k) { return document.getElementById('bgm-' + k); }
 
+// idempotent self-heal, same idea as updateAmbience: the one correct music
+// track for the current day/night state is always the one playing (weather
+// never affects the music), except during the chorus when both go quiet.
 function updateBgm() {
   if (!started || !bgmOn || document.hidden) return; // backgrounded: stay silent
-  // the flower chorus takes the stage: bgm pauses, then resumes where it left off
-  if (t < chorusUntil) {
-    if (bgmCurrent) bgmEl(bgmCurrent).pause();
-    return;
+  const want = (t < chorusUntil) ? null : (night ? 'night' : 'day');
+  for (const k of ['day', 'night']) {
+    const el = bgmEl(k);
+    if (k === want) {
+      if (el.paused) { el.volume = BGM_VOL; el.play().catch(() => {}); }
+    } else if (!el.paused) {
+      el.pause();
+    }
   }
-  const want = night ? 'night' : 'day';
-  const el = bgmEl(want);
-  if (want !== bgmCurrent) {
-    if (bgmCurrent) bgmEl(bgmCurrent).pause();
-    bgmCurrent = want;
-    el.volume = BGM_VOL;
-    el.play().catch(() => {});
-  } else if (el.paused) {
-    el.play().catch(() => {}); // resume after the chorus ends
-  }
+  bgmCurrent = want;
 }
 
 function toggleBgm(verbose) {
@@ -1777,16 +1767,13 @@ document.getElementById('screen').addEventListener('click', (e) => {
   if (cy >= 1 && cy <= H - 1) sowSeed(clamp(cx, 5, W - 6));
 });
 window.addEventListener('resize', () => { if (started && freezeUntil < Date.now()) { resize(); render(); } });
-// mobile: pause every sound when the app/tab goes to background, resume on return
-let hiddenPaused = [];
+// mobile: silence everything while backgrounded. On return we DON'T blindly
+// replay what was paused (day/night may have changed meanwhile) — updateBgm /
+// updateAmbience run every frame and re-establish the correct tracks themselves.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (started) saveGarden(); // capture the garden before the tab is backgrounded/closed
-    hiddenPaused = [...document.querySelectorAll('audio')].filter((a) => !a.paused);
-    hiddenPaused.forEach((a) => a.pause());
-  } else {
-    hiddenPaused.forEach((a) => a.play().catch(() => {}));
-    hiddenPaused = [];
+    [...document.querySelectorAll('audio')].forEach((a) => a.pause());
   }
 });
 window.addEventListener('pagehide', () => { if (started) saveGarden(); });
